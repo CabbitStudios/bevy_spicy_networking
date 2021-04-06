@@ -283,11 +283,11 @@ pub trait AppNetworkServerMessage {
     /// - Add a new event type of [`NetworkData<Box<T>>`]
     /// - Register the type for transformation over the wire
     /// - Internal bookkeeping
-    fn add_server_message<T: ServerMessage>(&mut self);
+    fn listen_for_server_message<T: ServerMessage>(&mut self);
 }
 
 impl AppNetworkServerMessage for AppBuilder {
-    fn add_server_message<T: ServerMessage>(&mut self) {
+    fn listen_for_server_message<T: ServerMessage>(&mut self) {
         let client = self.world().get_resource::<NetworkServer>().unwrap();
 
         client.recv_message_map.insert(T::NAME, Vec::new());

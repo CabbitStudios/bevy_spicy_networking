@@ -10,7 +10,134 @@
     unused_qualifications
 )]
 
-//! A simple networking plugin for Bevy
+/*!
+A simple networking plugin for Bevy
+
+Using this plugin is meant to be straightforward. You have one server and multiple clients.
+You simply add either the `ClientPlugin` or the `ServerPlugin` to the respective bevy app,
+register which kind of messages can be received through `listen_for_client_message` or `listen_for_server_message`
+(provided respectively by `AppNetworkClientMessage` and `AppNetworkServerMessage`) and you
+can start receiving packets as events of `NetworkData<Box<T>>`.
+
+## Example Client
+```rust,no_run
+use bevy::prelude::*;
+use bevy_networking_simple::{ClientPlugin, NetworkData, NetworkMessage, ServerMessage, ClientNetworkEvent, AppNetworkServerMessage};
+use serde::{Serialize, Deserialize};
+
+#[derive(Serialize, Deserialize)]
+struct WorldUpdate;
+
+#[typetag::serde]
+impl NetworkMessage for WorldUpdate {}
+
+impl ServerMessage for WorldUpdate {
+    const NAME: &'static str = "example:WorldUpdate";
+}
+
+fn main() {
+     let mut app = App::build();
+     app.add_plugin(ClientPlugin);
+     // We are receiving this from the server, so we need to listen for it
+     app.listen_for_server_message::<WorldUpdate>();
+     app.add_system(handle_world_updates.system());
+     app.add_system(handle_connection_events.system());
+}
+
+fn handle_world_updates(
+    mut chunk_updates: EventReader<NetworkData<Box<WorldUpdate>>>,
+) {
+    for chunk in chunk_updates.iter() {
+        info!("Got chunk update!");
+    }
+}
+
+fn handle_connection_events(mut network_events: EventReader<ClientNetworkEvent>,) {
+    for event in network_events.iter() {
+        match event {
+            &ClientNetworkEvent::Connected => info!("Connected to server!"),
+            _ => (),
+        }
+    }
+}
+
+```
+
+## Example Server
+```rust,no_run
+use bevy::prelude::*;
+use bevy_networking_simple::{ServerPlugin, NetworkData, NetworkMessage, NetworkServer, ServerMessage, ClientMessage, ServerNetworkEvent, AppNetworkServerMessage};
+
+use serde::{Serialize, Deserialize};
+#[derive(Serialize, Deserialize)]
+struct UserInput;
+
+#[typetag::serde]
+impl NetworkMessage for UserInput {}
+
+impl ServerMessage for UserInput {
+    const NAME: &'static str = "example:WorldUpdate";
+}
+
+fn main() {
+     let mut app = App::build();
+     app.add_plugin(ServerPlugin);
+     // We are receiving this from a client, so we need to listen for it!
+     app.listen_for_server_message::<UserInput>();
+     app.add_system(handle_world_updates.system());
+     app.add_system(handle_connection_events.system());
+}
+
+fn handle_world_updates(
+    net: Res<NetworkServer>,
+    mut chunk_updates: EventReader<NetworkData<Box<UserInput>>>,
+) {
+    for chunk in chunk_updates.iter() {
+        info!("Got chunk update!");
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct PlayerUpdate;
+
+#[typetag::serde]
+impl NetworkMessage for PlayerUpdate {}
+
+impl ClientMessage for PlayerUpdate {
+    const NAME: &'static str = "example:PlayerUpdate";
+}
+
+impl PlayerUpdate {
+    fn new() -> PlayerUpdate {
+        Self
+    }
+}
+
+fn handle_connection_events(
+    net: Res<NetworkServer>,
+    mut network_events: EventReader<ServerNetworkEvent>,
+) {
+    for event in network_events.iter() {
+        match event {
+            &ServerNetworkEvent::Connected(conn_id) => {
+                net.send_message(conn_id, PlayerUpdate::new());
+                info!("New client connected: {:?}", conn_id);
+            }
+            _ => (),
+        }
+    }
+}
+
+```
+As you can see, they are both quite similar, and provide everything a basic networked game needs.
+
+
+## Caveats
+
+Currently this library uses TCP under the hood. Meaning that it has all its drawbacks, where for example a very large update packet can
+'block' the connection. This is currently not built for fast-paced games that are not meant to be played on LAN, but should suffice for slow-paced
+games where less-stringent latency delays might be acceptable.
+*/
 
 mod client;
 mod error;
@@ -55,7 +182,7 @@ pub struct ConnectionId {
 
 impl ConnectionId {
     /// Get the address associated to this connection id
-    /// 
+    ///
     /// This contains the IP/Port information
     pub fn address(&self) -> SocketAddr {
         self.addr
@@ -113,7 +240,7 @@ pub enum ClientNetworkEvent {
 
 #[derive(Debug, Deref)]
 /// [`NetworkData`] is what is sent over the bevy event system
-/// 
+///
 /// Please check the root documentation how to up everything
 pub struct NetworkData<T> {
     source: ConnectionId,
@@ -141,7 +268,6 @@ impl<T> NetworkData<T> {
 #[allow(missing_copy_implementations)]
 /// Settings to configure the network, both client and server
 pub struct NetworkSettings {
-    
     /// Maximum packet size in bytes. If a client ever exceeds this size, they will be disconnected
     ///
     /// ## Default

@@ -5,6 +5,10 @@ use downcast_rs::DowncastSync;
 ///
 /// ## Example
 /// ```rust
+/// use bevy_networking_simple::NetworkMessage;
+/// use serde::{Serialize, Deserialize};
+///
+/// #[derive(Serialize, Deserialize)]
 /// struct PlayerInformation {
 ///     health: usize,
 ///     position: (u32, u32, u32)

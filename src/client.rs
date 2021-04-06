@@ -235,11 +235,11 @@ pub trait AppNetworkClientMessage {
     /// - Add a new event type of [`NetworkData<Box<T>>`]
     /// - Register the type for transformation over the wire
     /// - Internal bookkeeping
-    fn add_client_message<T: ClientMessage>(&mut self);
+    fn listen_for_client_message<T: ClientMessage>(&mut self);
 }
 
 impl AppNetworkClientMessage for AppBuilder {
-    fn add_client_message<T: ClientMessage>(&mut self) {
+    fn listen_for_client_message<T: ClientMessage>(&mut self) {
         let client = self.world().get_resource::<NetworkClient>().unwrap();
 
         client.recv_message_map.insert(T::NAME, Vec::new());
