@@ -26,11 +26,25 @@ struct ServerConnection {
     send_message: UnboundedSender<NetworkPacket>,
 }
 
+/// An instance of a [`NetworkClient`] is used to connect to a remote server
+/// using [`NetworkClient::connect`]
 pub struct NetworkClient {
     runtime: Runtime,
     server_connection: Option<ServerConnection>,
     recv_message_map: Arc<DashMap<&'static str, Vec<Box<dyn NetworkMessage>>>>,
     network_events: SyncChannel<ClientNetworkEvent>,
+}
+
+impl std::fmt::Debug for NetworkClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(conn) = self.server_connection.as_ref() {
+            write!(f, "NetworkClient [Connected to {}]", conn.peer_addr)?;
+        } else {
+            write!(f, "NetworkClient [Not Connected]")?;
+        }
+
+        Ok(())
+    }
 }
 
 impl NetworkClient {
@@ -46,6 +60,7 @@ impl NetworkClient {
         }
     }
 
+    /// Connect to a remote server
     pub fn connect(
         &mut self,
         addr: impl ToSocketAddrs + Send,
@@ -185,10 +200,9 @@ impl NetworkClient {
         Ok(())
     }
 
-    pub fn send_message<T: ServerMessage>(
-        &self,
-        message: T,
-    ) -> Result<(), NetworkError> {
+    /// Send a message to the connected server, returns `Err(NetworkError::NotConnected)` if
+    /// the connection couldn't be established yet
+    pub fn send_message<T: ServerMessage>(&self, message: T) -> Result<(), NetworkError> {
         debug!("Sending message to server");
         let server_connection = match self.server_connection.as_ref() {
             Some(server) => server,
@@ -212,7 +226,15 @@ impl NetworkClient {
     }
 }
 
+/// A utility trait on [`AppBuilder`] to easily register [`ClientMessage`]s
 pub trait AppNetworkClientMessage {
+    /// Register a client message type
+    /// 
+    /// ## Details
+    /// This will:
+    /// - Add a new event type of [`NetworkData<Box<T>>`]
+    /// - Register the type for transformation over the wire
+    /// - Internal bookkeeping
     fn add_client_message<T: ClientMessage>(&mut self);
 }
 
@@ -242,7 +264,17 @@ fn register_client_message<T>(
         messages
             .drain(..)
             .flat_map(|msg| msg.downcast())
-            .map(|msg| NetworkData::new(ConnectionId::server(), msg)),
+            .map(|msg| {
+                NetworkData::new(
+                    ConnectionId::server(
+                        net_res
+                            .server_connection
+                            .as_ref()
+                            .map(|conn| conn.peer_addr),
+                    ),
+                    msg,
+                )
+            }),
     );
 }
 

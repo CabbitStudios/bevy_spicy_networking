@@ -33,10 +33,7 @@ pub struct ClientConnection {
 }
 
 impl std::fmt::Debug for ClientConnection {
-    fn fmt(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-    ) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ClientConnection")
             .field("id", &self.id)
             .field("addr", &self.addr)
@@ -44,12 +41,24 @@ impl std::fmt::Debug for ClientConnection {
     }
 }
 
+/// An instance of a [`NetworkServer`] is used to listen for new client connections
+/// using [`NetworkServer::listen`]
 pub struct NetworkServer {
     runtime: Runtime,
     recv_message_map: Arc<DashMap<&'static str, Vec<(ConnectionId, Box<dyn NetworkMessage>)>>>,
     established_connections: Arc<DashMap<ConnectionId, ClientConnection>>,
     new_connections: SyncChannel<Result<NewIncomingConnection, NetworkError>>,
     disconnected_connections: SyncChannel<ConnectionId>,
+}
+
+impl std::fmt::Debug for NetworkServer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "NetworkServer [{} Connected Clients]",
+            self.established_connections.len()
+        )
+    }
 }
 
 impl NetworkServer {
@@ -66,10 +75,8 @@ impl NetworkServer {
         }
     }
 
-    pub fn listen(
-        &self,
-        addr: impl ToSocketAddrs + Send,
-    ) -> Result<(), NetworkError> {
+    /// Start listening for new clients
+    pub fn listen(&self, addr: impl ToSocketAddrs + Send) -> Result<(), NetworkError> {
         let listener = self
             .runtime
             .block_on(async move { TcpListener::bind(addr).await })?;
@@ -99,6 +106,7 @@ impl NetworkServer {
         Ok(())
     }
 
+    /// Send a message to a specific client
     pub fn send_message<T: ClientMessage>(
         &self,
         client_id: ConnectionId,
@@ -266,7 +274,15 @@ pub(crate) fn handle_new_incoming_connections(
     }
 }
 
+/// A utility trait on [`AppBuilder`] to easily register [`ServerMessage`]s
 pub trait AppNetworkServerMessage {
+    /// Register a server message type
+    ///
+    /// ## Details
+    /// This will:
+    /// - Add a new event type of [`NetworkData<Box<T>>`]
+    /// - Register the type for transformation over the wire
+    /// - Internal bookkeeping
     fn add_server_message<T: ServerMessage>(&mut self);
 }
 
