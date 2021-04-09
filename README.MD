@@ -43,4 +43,4 @@ Currently `bevy_spicy_networking` uses TCP only. This will change at some point,
 Contributing
 ------------
 
-To contribute, simply fork the repository and send a PR. Feel free to chat me up on the bevy discord under `@Hemera#2040`.
+To contribute, simply fork the repository and send a PR. Feel free to chat me up on the bevy discord under `@Hemera#2040` if you have any questions or suggestions.
