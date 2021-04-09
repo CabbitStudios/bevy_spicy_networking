@@ -32,7 +32,7 @@ Simply pick the version for your current bevy one:
 | Bevy Spicy Networking | Bevy |
 |:----:|:----:|
 | 0.5 | 0.5 |
-|-----|-----|
+
 
 
 Roadmap
