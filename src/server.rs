@@ -26,10 +26,17 @@ struct NewIncomingConnection {
 
 pub struct ClientConnection {
     id: ConnectionId,
-    _receive_task: JoinHandle<()>,
-    _send_task: JoinHandle<()>,
+    receive_task: JoinHandle<()>,
+    send_task: JoinHandle<()>,
     send_message: UnboundedSender<NetworkPacket>,
     addr: SocketAddr,
+}
+
+impl ClientConnection {
+    pub fn stop(self) {
+        self.receive_task.abort();
+        self.send_task.abort();
+    }
 }
 
 impl std::fmt::Debug for ClientConnection {
@@ -49,6 +56,7 @@ pub struct NetworkServer {
     established_connections: Arc<DashMap<ConnectionId, ClientConnection>>,
     new_connections: SyncChannel<Result<NewIncomingConnection, NetworkError>>,
     disconnected_connections: SyncChannel<ConnectionId>,
+    server_handle: Option<JoinHandle<()>>,
 }
 
 impl std::fmt::Debug for NetworkServer {
@@ -72,11 +80,17 @@ impl NetworkServer {
             established_connections: Arc::new(DashMap::new()),
             new_connections: SyncChannel::new(),
             disconnected_connections: SyncChannel::new(),
+            server_handle: None,
         }
     }
 
     /// Start listening for new clients
-    pub fn listen(&self, addr: impl ToSocketAddrs + Send) -> Result<(), NetworkError> {
+    ///
+    /// ## Note
+    /// If you are already listening for new connections, then this will disconnect existing connections first
+    pub fn listen(&mut self, addr: impl ToSocketAddrs + Send) -> Result<(), NetworkError> {
+        self.stop();
+        
         let listener = self
             .runtime
             .block_on(async move { TcpListener::bind(addr).await })?;
@@ -103,7 +117,7 @@ impl NetworkServer {
 
         trace!("Started listening");
 
-        self.runtime.spawn(listen_loop);
+        self.server_handle = Some(self.runtime.spawn(listen_loop));
 
         Ok(())
     }
@@ -151,6 +165,38 @@ impl NetworkServer {
             }
         }
     }
+
+
+    /// Disconnect all clients and stop listening for new ones
+    ///
+    /// ## Notes
+    /// This operation is idempotent and will do nothing if you are not actively listening
+    pub fn stop(&mut self) {
+        if let Some(conn) = self.server_handle.take() {
+            conn.abort();
+            for conn in self.established_connections.iter() {
+                let _ = self.disconnected_connections.sender.send(*conn.key());
+            }
+            self.established_connections.clear();
+            self.recv_message_map.clear();
+
+            self.new_connections.receiver.try_iter().for_each(|_| ());
+        }
+    }
+
+    /// Disconnect a specific client
+    pub fn disconnect(&self, conn_id: ConnectionId) -> Result<(), NetworkError> {
+
+        let connection = if let Some(conn) = self.established_connections.remove(&conn_id) {
+            conn
+        } else {
+            return Err(NetworkError::ConnectionNotFound(conn_id));
+        };
+
+        connection.1.stop();
+
+        Ok(())
+    }
 }
 
 pub(crate) fn handle_new_incoming_connections(
@@ -182,7 +228,7 @@ pub(crate) fn handle_new_incoming_connections(
                     conn_id,
                     ClientConnection {
                         id: conn_id,
-                        _receive_task: server.runtime.spawn(async move {
+                        receive_task: server.runtime.spawn(async move {
                             let recv_message_map = recv_message_map;
                             let network_settings = network_settings;
 
@@ -197,12 +243,9 @@ pub(crate) fn handle_new_incoming_connections(
                                 let length = match read_socket.read_u32().await {
                                     Ok(len) => len as usize,
                                     Err(err) => {
-                                        match err.kind() {
-                                            // If we get an EOF here, the connection was broken and we simply report a 'disconnected' signal
-                                            std::io::ErrorKind::UnexpectedEof => break, 
-                                            _ => (),
-                                        }
-
+                                        // If we get an EOF here, the connection was broken and we simply report a 'disconnected' signal
+                                        if err.kind() == std::io::ErrorKind::UnexpectedEof { break } 
+                                            
                                         error!("Encountered error while reading length [{}]: {}", conn_id, err);
                                         break;
                                     }
@@ -253,7 +296,7 @@ pub(crate) fn handle_new_incoming_connections(
                                 }
                             }
                         }),
-                        _send_task: server.runtime.spawn(async move {
+                        send_task: server.runtime.spawn(async move {
                             let mut recv_message = recv_message;
                             let mut send_socket = send_socket;
 

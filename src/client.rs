@@ -21,9 +21,16 @@ use crate::{
 #[display(fmt = "Server connection to {}", peer_addr)]
 struct ServerConnection {
     peer_addr: SocketAddr,
-    _receive_task: JoinHandle<()>,
-    _send_task: JoinHandle<()>,
+    receive_task: JoinHandle<()>,
+    send_task: JoinHandle<()>,
     send_message: UnboundedSender<NetworkPacket>,
+}
+
+impl ServerConnection {
+    fn stop(self) {
+        self.receive_task.abort();
+        self.send_task.abort();
+    }
 }
 
 /// An instance of a [`NetworkClient`] is used to connect to a remote server
@@ -61,12 +68,18 @@ impl NetworkClient {
     }
 
     /// Connect to a remote server
+    ///
+    /// ## Note
+    /// This will disconnect you first from any existing server connections
     pub fn connect(
         &mut self,
         addr: impl ToSocketAddrs + Send,
         network_settings: NetworkSettings,
     ) -> Result<(), NetworkError> {
         debug!("Starting connection");
+
+        self.disconnect();
+
         let connection = self
             .runtime
             .block_on(async move { TcpStream::connect(addr).await })?;
@@ -79,10 +92,11 @@ impl NetworkClient {
         let recv_message_map = self.recv_message_map.clone();
         let (send_message, recv_message) = unbounded_channel();
         let network_event_sender = self.network_events.sender.clone();
+        let network_event_sender_two = self.network_events.sender.clone();
 
         self.server_connection = Some(ServerConnection {
             peer_addr,
-            _send_task: self.runtime.spawn(async move {
+            send_task: self.runtime.spawn(async move {
                 let mut recv_message = recv_message;
                 let mut send_socket = send_socket;
 
@@ -104,7 +118,7 @@ impl NetworkClient {
                         Ok(_) => (),
                         Err(err) => {
                             error!("Could not send packet length: {:?}: {}", len, err);
-                            return;
+                            break;
                         }
                     }
 
@@ -114,14 +128,16 @@ impl NetworkClient {
                         Ok(_) => (),
                         Err(err) => {
                             error!("Could not send packet: {:?}: {}", message, err);
-                            return;
+                            break;
                         }
                     }
 
                     trace!("Succesfully written all!");
                 }
+
+                let _ = network_event_sender_two.send(ClientNetworkEvent::Disconnected);
             }),
-            _receive_task: self.runtime.spawn(async move {
+            receive_task: self.runtime.spawn(async move {
                 let mut read_socket = read_socket;
                 let network_settings = network_settings;
                 let recv_message_map = recv_message_map;
@@ -202,8 +218,23 @@ impl NetworkClient {
         Ok(())
     }
 
+    /// Disconnect from a server
+    ///
+    /// This operation is idempotent and simply does nothing when you are
+    /// not connected to anything
+    pub fn disconnect(&mut self) {
+        if let Some(conn) = self.server_connection.take() {
+            conn.stop();
+
+            let _ = self
+                .network_events
+                .sender
+                .send(ClientNetworkEvent::Disconnected);
+        }
+    }
+
     /// Send a message to the connected server, returns `Err(NetworkError::NotConnected)` if
-    /// the connection couldn't be established yet
+    /// the connection hasn't been established yet
     pub fn send_message<T: ServerMessage>(&self, message: T) -> Result<(), NetworkError> {
         debug!("Sending message to server");
         let server_connection = match self.server_connection.as_ref() {
@@ -281,8 +312,21 @@ fn register_client_message<T>(
 }
 
 pub fn send_client_network_events(
-    client_server: ResMut<NetworkClient>,
+    mut client_server: ResMut<NetworkClient>,
     mut client_network_events: EventWriter<ClientNetworkEvent>,
 ) {
-    client_network_events.send_batch(client_server.network_events.receiver.try_iter());
+    let mut disconnected = false;
+    client_network_events.send_batch(client_server.network_events.receiver.try_iter().inspect(
+        |event| {
+            if std::mem::discriminant(event)
+                == std::mem::discriminant(&ClientNetworkEvent::Disconnected)
+            {
+                disconnected = true;
+            }
+        },
+    ));
+
+    if disconnected {
+        client_server.disconnect();
+    }
 }
