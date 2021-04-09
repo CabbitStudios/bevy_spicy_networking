@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy_networking_simple::{NetworkClient, NetworkData, NetworkSettings};
+use bevy_networking_simple::{ClientNetworkEvent, NetworkClient, NetworkData, NetworkSettings};
 use std::net::SocketAddr;
 mod shared;
 
@@ -21,6 +21,7 @@ fn main() {
     app.add_system(handle_connect_button.system());
     app.add_system(handle_message_button.system());
     app.add_system(handle_incoming_messages.system());
+    app.add_system(handle_network_events.system());
 
     app.init_resource::<GlobalChatSettings>();
 
@@ -41,6 +42,32 @@ fn handle_incoming_messages(
 
     for new_message in new_messages.iter() {
         messages.add(UserMessage::new(&new_message.name, &new_message.message));
+    }
+}
+
+fn handle_network_events(
+    mut new_network_events: EventReader<ClientNetworkEvent>,
+    connect_query: Query<&Children, With<ConnectButton>>,
+    mut text_query: Query<&mut Text>,
+    mut messages: Query<&mut GameChatMessages>,
+) {
+    let connect_children = connect_query.single().unwrap();
+    let mut text = text_query.get_mut(connect_children[0]).unwrap();
+    for event in new_network_events.iter() {
+        match event {
+            ClientNetworkEvent::Connected => {
+                text.sections[0].value = String::from("Reconnect to server");
+            }
+
+            ClientNetworkEvent::Disconnected => {
+                text.sections[0].value = String::from("Connect to server");
+            }
+            ClientNetworkEvent::Error(err) => {
+                let mut messages = messages.single_mut().unwrap();
+                
+                messages.add(UserMessage::new(String::from("SYSTEM"), err.to_string()));
+            }
+        }
     }
 }
 

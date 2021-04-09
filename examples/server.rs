@@ -32,7 +32,7 @@ fn main() {
 
 // On the server side, you need to setup networking. You do not need to do so at startup, and can start listening
 // at any time.
-fn setup_networking(net: ResMut<NetworkServer>) {
+fn setup_networking(mut net: ResMut<NetworkServer>) {
     let ip_address = "127.0.0.1".parse().expect("Could not parse ip address");
 
     info!("Address of the server: {}", ip_address);
