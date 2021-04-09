@@ -1,0 +1,352 @@
+use bevy::prelude::*;
+use bevy_networking_simple::{NetworkClient, NetworkData, NetworkSettings};
+use std::net::SocketAddr;
+mod shared;
+
+fn main() {
+    let mut app = App::build();
+
+    app.add_plugins(DefaultPlugins);
+
+    // You need to add the `ClientPlugin` first before you can register
+    // `ClientMessage`s
+    app.add_plugin(bevy_networking_simple::ClientPlugin);
+
+    // A good way to ensure that you are not forgetting to register
+    // any messages is to register them where they are defined!
+    shared::client_register_network_messages(&mut app);
+
+    app.add_startup_system(setup_ui.system());
+
+    app.add_system(handle_connect_button.system());
+    app.add_system(handle_message_button.system());
+    app.add_system(handle_incoming_messages.system());
+
+    app.init_resource::<GlobalChatSettings>();
+
+    app.add_system_to_stage(CoreStage::PostUpdate, handle_chat_area.system());
+
+    app.run();
+}
+
+///////////////////////////////////////////////////////////////
+////////////// Incoming Message Handler ///////////////////////
+///////////////////////////////////////////////////////////////
+
+fn handle_incoming_messages(
+    mut messages: Query<&mut GameChatMessages>,
+    mut new_messages: EventReader<NetworkData<shared::NewChatMessage>>,
+) {
+    let mut messages = messages.single_mut().unwrap();
+
+    for new_message in new_messages.iter() {
+        messages.add(UserMessage::new(&new_message.name, &new_message.message));
+    }
+}
+
+///////////////////////////////////////////////////////////////
+////////////// Data Definitions ///////////////////////////////
+///////////////////////////////////////////////////////////////
+
+struct GlobalChatSettings {
+    chat_style: TextStyle,
+}
+
+impl FromWorld for GlobalChatSettings {
+    fn from_world(world: &mut World) -> Self {
+        let asset_server = world.get_resource::<AssetServer>().unwrap();
+
+        GlobalChatSettings {
+            chat_style: TextStyle {
+                font: asset_server.load("fonts/OpenSans-Regular.ttf"),
+                font_size: 20.,
+                color: Color::BLACK,
+            },
+        }
+    }
+}
+
+enum ChatMessage {
+    SystemMessage(SystemMessage),
+    UserMessage(UserMessage),
+}
+
+impl ChatMessage {
+    fn to_text(&self) -> String {
+        match self {
+            ChatMessage::SystemMessage(SystemMessage(msg)) => format!("[SYSTEM] {}", msg),
+            ChatMessage::UserMessage(UserMessage { user, message }) => {
+                format!("{}: {}", user, message)
+            }
+        }
+    }
+}
+
+impl From<SystemMessage> for ChatMessage {
+    fn from(other: SystemMessage) -> ChatMessage {
+        ChatMessage::SystemMessage(other)
+    }
+}
+
+impl From<UserMessage> for ChatMessage {
+    fn from(other: UserMessage) -> ChatMessage {
+        ChatMessage::UserMessage(other)
+    }
+}
+
+struct SystemMessage(String);
+
+impl SystemMessage {
+    fn new<T: Into<String>>(msg: T) -> SystemMessage {
+        Self(msg.into())
+    }
+}
+
+struct UserMessage {
+    user: String,
+    message: String,
+}
+
+impl UserMessage {
+    fn new<U: Into<String>, M: Into<String>>(user: U, message: M) -> Self {
+        UserMessage {
+            user: user.into(),
+            message: message.into(),
+        }
+    }
+}
+
+struct ChatMessages<T> {
+    messages: Vec<T>,
+}
+
+impl<T> ChatMessages<T> {
+    fn new() -> Self {
+        ChatMessages { messages: vec![] }
+    }
+
+    fn add<K: Into<T>>(&mut self, msg: K) {
+        let msg = msg.into();
+        self.messages.push(msg);
+    }
+}
+
+type GameChatMessages = ChatMessages<ChatMessage>;
+
+///////////////////////////////////////////////////////////////
+////////////// UI Definitions/Handlers ////////////////////////
+///////////////////////////////////////////////////////////////
+
+struct ConnectButton;
+
+fn handle_connect_button(
+    mut net: ResMut<NetworkClient>,
+    interaction_query: Query<
+        (&Interaction, &Children),
+        (Changed<Interaction>, With<ConnectButton>),
+    >,
+    mut text_query: Query<&mut Text>,
+    mut messages: Query<&mut GameChatMessages>,
+) {
+    let mut messages = messages.single_mut().unwrap();
+
+    for (interaction, children) in interaction_query.iter() {
+        let mut text = text_query.get_mut(children[0]).unwrap();
+        match interaction {
+            Interaction::Clicked => {
+                text.sections[0].value = String::from("Connecting...");
+                messages.add(SystemMessage::new("Connecting to server..."));
+
+                let ip_address = "127.0.0.1".parse().unwrap();
+
+                info!("Address of the server: {}", ip_address);
+
+                let socket_address = SocketAddr::new(ip_address, 9999);
+
+                match net.connect(
+                    socket_address,
+                    NetworkSettings {
+                        max_packet_length: 10 * 1024 * 1024,
+                    },
+                ) {
+                    Ok(_) => {
+                        messages.add(SystemMessage::new(format!(
+                            "Succesfully connected to server!"
+                        )));
+                        text.sections[0].value = String::from("Disconnect");
+                    }
+                    Err(err) => {
+                        messages.add(SystemMessage::new(format!(
+                            "Could not connect to server: {}",
+                            err
+                        )));
+                        text.sections[0].value = String::from("Connect to server");
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+struct MessageButton;
+
+fn handle_message_button(
+    net: Res<NetworkClient>,
+    interaction_query: Query<&Interaction, (Changed<Interaction>, With<MessageButton>)>,
+    mut messages: Query<&mut GameChatMessages>,
+) {
+    let mut messages = messages.single_mut().unwrap();
+
+    for interaction in interaction_query.iter() {
+        match interaction {
+            Interaction::Clicked => {
+                match net.send_message(shared::UserChatMessage {
+                    message: String::from("Hello there!"),
+                }) {
+                    Ok(()) => (),
+                    Err(err) => messages.add(SystemMessage::new(format!(
+                        "Could not send message: {}",
+                        err
+                    ))),
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+struct ChatArea;
+
+fn handle_chat_area(
+    chat_settings: Res<GlobalChatSettings>,
+    messages: Query<&GameChatMessages, Changed<GameChatMessages>>,
+    mut chat_text_query: Query<&mut Text, With<ChatArea>>,
+) {
+    let messages = if let Ok(messages) = messages.single() {
+        messages
+    } else {
+        return;
+    };
+
+    let sections = messages
+        .messages
+        .iter()
+        .map(|msg| msg.to_text())
+        .map(|text| TextSection {
+            value: format!("{}\n", text),
+            style: chat_settings.chat_style.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    let mut text = chat_text_query.single_mut().unwrap();
+
+    text.sections = sections;
+}
+
+fn setup_ui(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    commands.spawn_bundle(UiCameraBundle::default());
+
+    commands.spawn_bundle((GameChatMessages::new(),));
+
+    commands
+        .spawn_bundle(NodeBundle {
+            style: Style {
+                size: Size::new(Val::Percent(100.), Val::Percent(100.)),
+                justify_content: JustifyContent::SpaceBetween,
+                flex_direction: FlexDirection::ColumnReverse,
+                ..Default::default()
+            },
+            material: materials.add(Color::NONE.into()),
+            ..Default::default()
+        })
+        .with_children(|parent| {
+            parent
+                .spawn_bundle(NodeBundle {
+                    style: Style {
+                        size: Size::new(Val::Percent(100.), Val::Percent(90.)),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
+                .with_children(|parent| {
+                    parent
+                        .spawn_bundle(TextBundle {
+                            ..Default::default()
+                        })
+                        .insert(ChatArea);
+                });
+            parent
+                .spawn_bundle(NodeBundle {
+                    style: Style {
+                        size: Size::new(Val::Percent(100.), Val::Percent(10.)),
+                        ..Default::default()
+                    },
+                    material: materials.add(Color::GRAY.into()),
+                    ..Default::default()
+                })
+                .with_children(|parent_button_bar| {
+                    parent_button_bar
+                        .spawn_bundle(ButtonBundle {
+                            style: Style {
+                                size: Size::new(Val::Percent(50.), Val::Percent(100.)),
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::Center,
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        })
+                        .insert(MessageButton)
+                        .with_children(|button| {
+                            button.spawn_bundle(TextBundle {
+                                text: Text::with_section(
+                                    "Send Message!",
+                                    TextStyle {
+                                        font: asset_server.load("fonts/Staatliches-Regular.ttf"),
+                                        font_size: 40.,
+                                        color: Color::BLACK.into(),
+                                    },
+                                    TextAlignment {
+                                        vertical: VerticalAlign::Center,
+                                        horizontal: HorizontalAlign::Center,
+                                    },
+                                ),
+                                ..Default::default()
+                            });
+                        });
+
+                    parent_button_bar
+                        .spawn_bundle(ButtonBundle {
+                            style: Style {
+                                size: Size::new(Val::Percent(50.), Val::Percent(100.)),
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::Center,
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        })
+                        .insert(ConnectButton)
+                        .with_children(|button| {
+                            button.spawn_bundle(TextBundle {
+                                text: Text::with_section(
+                                    "Connect to server",
+                                    TextStyle {
+                                        font: asset_server.load("fonts/Staatliches-Regular.ttf"),
+                                        font_size: 40.,
+                                        color: Color::BLACK.into(),
+                                    },
+                                    TextAlignment {
+                                        vertical: VerticalAlign::Center,
+                                        horizontal: HorizontalAlign::Center,
+                                    },
+                                ),
+                                ..Default::default()
+                            });
+                        });
+                });
+        });
+}

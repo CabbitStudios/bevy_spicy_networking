@@ -23,7 +23,13 @@ pub trait NetworkMessage: DowncastSync {}
 
 downcast_rs::impl_downcast!(sync NetworkMessage);
 
-/// A marker trait to signal that this message should only be sent *to* a server
+/**
+A marker trait to signal that this message should be sent *to* a server
+
+## Note
+
+You can implement both [`ServerMessage`] and [`ClientMessage`]
+*/
 pub trait ServerMessage: NetworkMessage {
     /// A unique name to identify your message, this needs to be unique __across all included crates__
     ///
@@ -31,7 +37,13 @@ pub trait ServerMessage: NetworkMessage {
     const NAME: &'static str;
 }
 
-/// A marker trait to signal that this message should only be sent *to* a client
+/**
+A marker trait to signal that this message should be sent *to* a client
+
+## Note
+
+You can implement both [`ClientMessage`] and [`ServerMessage`]
+*/
 pub trait ClientMessage: NetworkMessage {
     /// A unique name to identify your message, this needs to be unique __across all included crates__
     ///

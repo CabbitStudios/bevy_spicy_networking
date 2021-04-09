@@ -4,7 +4,7 @@ use bevy::{prelude::*, utils::Uuid};
 use dashmap::DashMap;
 use derive_more::Display;
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter},
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream, ToSocketAddrs},
     runtime::Runtime,
     sync::mpsc::{unbounded_channel, UnboundedSender},
@@ -101,6 +101,8 @@ impl NetworkServer {
             }
         };
 
+        trace!("Started listening");
+
         self.runtime.spawn(listen_loop);
 
         Ok(())
@@ -131,6 +133,23 @@ impl NetworkServer {
         }
 
         Ok(())
+    }
+
+    /// Broadcast a message to all connected clients
+    pub fn broadcast<T: ClientMessage + Clone>(&self, message: T) {
+        for connection in self.established_connections.iter() {
+            let packet = NetworkPacket {
+                kind: String::from(T::NAME),
+                data: Box::new(message.clone()),
+            };
+
+            match connection.send_message.send(packet) {
+                Ok(_) => (),
+                Err(err) => {
+                    warn!("Could not send to client because: {}", err);
+                }
+            }
+        }
     }
 }
 
@@ -164,22 +183,32 @@ pub(crate) fn handle_new_incoming_connections(
                     ClientConnection {
                         id: conn_id,
                         _receive_task: server.runtime.spawn(async move {
-                            let read_socket = read_socket;
                             let recv_message_map = recv_message_map;
                             let network_settings = network_settings;
 
-                            let mut bufstream = BufReader::new(read_socket);
+                            let mut read_socket = read_socket;
 
-                            let mut buffer = Vec::with_capacity(network_settings.max_packet_length);
+                            let mut buffer: Vec<u8> = (0..network_settings.max_packet_length).map(|_| 0).collect();
+
+                            trace!("Starting listen task for {}", conn_id);
                             loop {
-                                let length = match bufstream.read_u32().await {
+                                trace!("Listening for length!");
+
+                                let length = match read_socket.read_u32().await {
                                     Ok(len) => len as usize,
                                     Err(err) => {
-                                        error!("Encountered error while fetching length [{}]: {}", conn_id, err);
+                                        match err.kind() {
+                                            // If we get an EOF here, the connection was broken and we simply report a 'disconnected' signal
+                                            std::io::ErrorKind::UnexpectedEof => break, 
+                                            _ => (),
+                                        }
+
+                                        error!("Encountered error while reading length [{}]: {}", conn_id, err);
                                         break;
                                     }
                                 };
 
+                                trace!("Received packet with length: {}", length);
 
                                 if length > network_settings.max_packet_length {
                                     error!("Received too large packet from [{}]: {} > {}", conn_id, length, network_settings.max_packet_length);
@@ -187,13 +216,15 @@ pub(crate) fn handle_new_incoming_connections(
                                 }
 
 
-                                match bufstream.read_exact(&mut buffer[..length]).await {
+                                match read_socket.read_exact(&mut buffer[..length]).await {
                                     Ok(_) => (),
                                     Err(err) => {
-                                        error!("Encountered error while fetching stream of length {} [{}]: {}", length, conn_id, err);
+                                        error!("Encountered error while reading stream of length {} [{}]: {}", length, conn_id, err);
                                         break;
                                     }
                                 }
+
+                                trace!("Read buffer of length {}", length);
 
                                 let packet: NetworkPacket = match serde_json::from_slice(&buffer[..length]) {
                                     Ok(packet) => packet,
@@ -203,12 +234,16 @@ pub(crate) fn handle_new_incoming_connections(
                                     }
                                 };
 
+                                trace!("Created a network packet");
+
                                 match recv_message_map.get_mut(&packet.kind[..]) {
                                     Some(mut packets) => packets.push((conn_id, packet.data)),
                                     None => {
                                         error!("Could not find existing entries for message kinds: {:?}", packet);
                                     }
                                 }
+                                
+                                debug!("Received new message of length: {}", length);
                             }
 
                             match disconnected_connections.send(conn_id) {
@@ -220,7 +255,7 @@ pub(crate) fn handle_new_incoming_connections(
                         }),
                         _send_task: server.runtime.spawn(async move {
                             let mut recv_message = recv_message;
-                            let mut bufwriter = BufWriter::new(send_socket);
+                            let mut send_socket = send_socket;
 
                             while let Some(message) = recv_message.recv().await {
                                 let encoded = match serde_json::to_vec(&message) {
@@ -233,7 +268,7 @@ pub(crate) fn handle_new_incoming_connections(
 
                                 let len = encoded.len();
 
-                                match bufwriter.write_u32(len as u32).await {
+                                match send_socket.write_u32(len as u32).await {
                                     Ok(_) => (),
                                     Err(err) => {
                                         error!("Could not send packet length: {:?}: {}", len, err);
@@ -241,7 +276,7 @@ pub(crate) fn handle_new_incoming_connections(
                                     }
                                 }
 
-                                match bufwriter.write_all(&encoded).await {
+                                match send_socket.write_all(&encoded).await {
                                     Ok(_) => (),
                                     Err(err) => {
                                         error!("Could not send packet: {:?}: {}", message, err);
@@ -280,7 +315,7 @@ pub trait AppNetworkServerMessage {
     ///
     /// ## Details
     /// This will:
-    /// - Add a new event type of [`NetworkData<Box<T>>`]
+    /// - Add a new event type of [`NetworkData<T>`]
     /// - Register the type for transformation over the wire
     /// - Internal bookkeeping
     fn listen_for_server_message<T: ServerMessage>(&mut self);
@@ -290,15 +325,17 @@ impl AppNetworkServerMessage for AppBuilder {
     fn listen_for_server_message<T: ServerMessage>(&mut self) {
         let client = self.world().get_resource::<NetworkServer>().unwrap();
 
+        debug!("Registered a new ServerMessage: {}", T::NAME);
+
         client.recv_message_map.insert(T::NAME, Vec::new());
-        self.add_event::<NetworkData<Box<T>>>();
+        self.add_event::<NetworkData<T>>();
         self.add_system_to_stage(CoreStage::PreUpdate, register_server_message::<T>.system());
     }
 }
 
 fn register_server_message<T>(
     net_res: ResMut<NetworkServer>,
-    mut events: EventWriter<NetworkData<Box<T>>>,
+    mut events: EventWriter<NetworkData<T>>,
 ) where
     T: ServerMessage,
 {
@@ -310,6 +347,6 @@ fn register_server_message<T>(
     events.send_batch(
         messages
             .drain(..)
-            .flat_map(|(conn, msg)| msg.downcast().map(|msg| NetworkData::new(conn, msg))),
+            .flat_map(|(conn, msg)| msg.downcast().map(|msg| NetworkData::new(conn, *msg))),
     );
 }

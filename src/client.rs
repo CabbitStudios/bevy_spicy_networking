@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use dashmap::DashMap;
 use derive_more::Display;
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter},
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpStream, ToSocketAddrs},
     runtime::Runtime,
     sync::mpsc::{unbounded_channel, UnboundedSender},
@@ -84,7 +84,7 @@ impl NetworkClient {
             peer_addr,
             _send_task: self.runtime.spawn(async move {
                 let mut recv_message = recv_message;
-                let mut bufwriter = BufWriter::new(send_socket);
+                let mut send_socket = send_socket;
 
                 debug!("Starting new server connection, sending task");
 
@@ -100,7 +100,7 @@ impl NetworkClient {
                     let len = encoded.len();
                     debug!("Sending a new message of size: {}", len);
 
-                    match bufwriter.write_u32(len as u32).await {
+                    match send_socket.write_u32(len as u32).await {
                         Ok(_) => (),
                         Err(err) => {
                             error!("Could not send packet length: {:?}: {}", len, err);
@@ -108,26 +108,28 @@ impl NetworkClient {
                         }
                     }
 
-                    match bufwriter.write_all(&encoded).await {
+                    trace!("Sending the content of the message!");
+
+                    match send_socket.write_all(&encoded).await {
                         Ok(_) => (),
                         Err(err) => {
                             error!("Could not send packet: {:?}: {}", message, err);
                             return;
                         }
                     }
+
+                    trace!("Succesfully written all!");
                 }
             }),
             _receive_task: self.runtime.spawn(async move {
-                let read_socket = read_socket;
+                let mut read_socket = read_socket;
                 let network_settings = network_settings;
                 let recv_message_map = recv_message_map;
-
-                let mut bufstream = BufReader::new(read_socket);
 
                 let mut buffer: Vec<u8> =
                     (0..network_settings.max_packet_length).map(|_| 0).collect();
                 loop {
-                    let length = match bufstream.read_u32().await {
+                    let length = match read_socket.read_u32().await {
                         Ok(len) => len as usize,
                         Err(err) => {
                             error!(
@@ -146,7 +148,7 @@ impl NetworkClient {
                         break;
                     }
 
-                    match bufstream.read_exact(&mut buffer[..length]).await {
+                    match read_socket.read_exact(&mut buffer[..length]).await {
                         Ok(_) => (),
                         Err(err) => {
                             error!(
@@ -229,10 +231,10 @@ impl NetworkClient {
 /// A utility trait on [`AppBuilder`] to easily register [`ClientMessage`]s
 pub trait AppNetworkClientMessage {
     /// Register a client message type
-    /// 
+    ///
     /// ## Details
     /// This will:
-    /// - Add a new event type of [`NetworkData<Box<T>>`]
+    /// - Add a new event type of [`NetworkData<T>`]
     /// - Register the type for transformation over the wire
     /// - Internal bookkeeping
     fn listen_for_client_message<T: ClientMessage>(&mut self);
@@ -244,14 +246,14 @@ impl AppNetworkClientMessage for AppBuilder {
 
         client.recv_message_map.insert(T::NAME, Vec::new());
 
-        self.add_event::<NetworkData<Box<T>>>();
+        self.add_event::<NetworkData<T>>();
         self.add_system_to_stage(CoreStage::PreUpdate, register_client_message::<T>.system());
     }
 }
 
 fn register_client_message<T>(
     net_res: ResMut<NetworkClient>,
-    mut events: EventWriter<NetworkData<Box<T>>>,
+    mut events: EventWriter<NetworkData<T>>,
 ) where
     T: ClientMessage,
 {
@@ -272,7 +274,7 @@ fn register_client_message<T>(
                             .as_ref()
                             .map(|conn| conn.peer_addr),
                     ),
-                    msg,
+                    *msg,
                 )
             }),
     );

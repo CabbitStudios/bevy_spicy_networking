@@ -17,7 +17,7 @@ Using this plugin is meant to be straightforward. You have one server and multip
 You simply add either the `ClientPlugin` or the `ServerPlugin` to the respective bevy app,
 register which kind of messages can be received through `listen_for_client_message` or `listen_for_server_message`
 (provided respectively by `AppNetworkClientMessage` and `AppNetworkServerMessage`) and you
-can start receiving packets as events of `NetworkData<Box<T>>`.
+can start receiving packets as events of `NetworkData<T>`.
 
 ## Example Client
 ```rust,no_run
@@ -45,7 +45,7 @@ fn main() {
 }
 
 fn handle_world_updates(
-    mut chunk_updates: EventReader<NetworkData<Box<WorldUpdate>>>,
+    mut chunk_updates: EventReader<NetworkData<WorldUpdate>>,
 ) {
     for chunk in chunk_updates.iter() {
         info!("Got chunk update!");
@@ -66,7 +66,7 @@ fn handle_connection_events(mut network_events: EventReader<ClientNetworkEvent>,
 ## Example Server
 ```rust,no_run
 use bevy::prelude::*;
-use bevy_networking_simple::{ServerPlugin, NetworkData, NetworkMessage, NetworkServer, ServerMessage, ClientMessage, ServerNetworkEvent, AppNetworkServerMessage};
+use bevy_networking_simple::{ServerPlugin, NetworkData, NetworkMessage, NetworkServer, ServerMessage, ClientMessage, ServerNetworkEvent, AppNetworkClientMessage};
 
 use serde::{Serialize, Deserialize};
 #[derive(Serialize, Deserialize)]
@@ -75,7 +75,7 @@ struct UserInput;
 #[typetag::serde]
 impl NetworkMessage for UserInput {}
 
-impl ServerMessage for UserInput {
+impl ClientMessage for UserInput {
     const NAME: &'static str = "example:WorldUpdate";
 }
 
@@ -83,14 +83,14 @@ fn main() {
      let mut app = App::build();
      app.add_plugin(ServerPlugin);
      // We are receiving this from a client, so we need to listen for it!
-     app.listen_for_server_message::<UserInput>();
+     app.listen_for_client_message::<UserInput>();
      app.add_system(handle_world_updates.system());
      app.add_system(handle_connection_events.system());
 }
 
 fn handle_world_updates(
     net: Res<NetworkServer>,
-    mut chunk_updates: EventReader<NetworkData<Box<UserInput>>>,
+    mut chunk_updates: EventReader<NetworkData<UserInput>>,
 ) {
     for chunk in chunk_updates.iter() {
         info!("Got chunk update!");
@@ -131,6 +131,7 @@ fn handle_connection_events(
 ```
 As you can see, they are both quite similar, and provide everything a basic networked game needs.
 
+For a more 
 
 ## Caveats
 
