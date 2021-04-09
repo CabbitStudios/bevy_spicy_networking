@@ -31,7 +31,7 @@ Bevy Version Compatibility
 This also means that this crate will only get stable once bevy is also stable. 
 
 Current crate version: [![crates.io](https://img.shields.io/crates/v/bevy_spicy_networking)](https://crates.io/crates/bevy_spicy_networking)  
-Current bevy version: [![docs.rs](https://docs.rs/bevy/badge.svg)](https://docs.rs/bevy)
+Current bevy version: [![crates.io](https://img.shields.io/crates/v/bevy)](https://crates.io/crates/bevy)
 
 Roadmap
 -------
