@@ -11,7 +11,7 @@
 )]
 
 /*!
-A simple networking plugin for Bevy
+A spicy simple networking plugin for Bevy
 
 Using this plugin is meant to be straightforward. You have one server and multiple clients.
 You simply add either the `ClientPlugin` or the `ServerPlugin` to the respective bevy app,
@@ -22,7 +22,7 @@ can start receiving packets as events of `NetworkData<T>`.
 ## Example Client
 ```rust,no_run
 use bevy::prelude::*;
-use bevy_networking_simple::{ClientPlugin, NetworkData, NetworkMessage, ServerMessage, ClientNetworkEvent, AppNetworkServerMessage};
+use bevy_spicy_networking::{ClientPlugin, NetworkData, NetworkMessage, ServerMessage, ClientNetworkEvent, AppNetworkServerMessage};
 use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize)]
@@ -66,7 +66,7 @@ fn handle_connection_events(mut network_events: EventReader<ClientNetworkEvent>,
 ## Example Server
 ```rust,no_run
 use bevy::prelude::*;
-use bevy_networking_simple::{ServerPlugin, NetworkData, NetworkMessage, NetworkServer, ServerMessage, ClientMessage, ServerNetworkEvent, AppNetworkClientMessage};
+use bevy_spicy_networking::{ServerPlugin, NetworkData, NetworkMessage, NetworkServer, ServerMessage, ClientMessage, ServerNetworkEvent, AppNetworkClientMessage};
 
 use serde::{Serialize, Deserialize};
 #[derive(Serialize, Deserialize)]

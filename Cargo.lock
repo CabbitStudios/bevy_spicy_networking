@@ -462,23 +462,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bevy_networking_simple"
-version = "0.5.0"
-dependencies = [
- "bevy",
- "bincode",
- "crossbeam-channel",
- "dashmap",
- "derive_more",
- "downcast-rs",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "typetag",
-]
-
-[[package]]
 name = "bevy_pbr"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -576,6 +559,23 @@ dependencies = [
  "serde",
  "thiserror",
  "uuid",
+]
+
+[[package]]
+name = "bevy_spicy_networking"
+version = "0.5.0"
+dependencies = [
+ "bevy",
+ "bincode",
+ "crossbeam-channel",
+ "dashmap",
+ "derive_more",
+ "downcast-rs",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "typetag",
 ]
 
 [[package]]

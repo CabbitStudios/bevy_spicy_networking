@@ -1,6 +1,6 @@
 use bevy::app::ScheduleRunnerSettings;
 use bevy::prelude::*;
-use bevy_networking_simple::{ConnectionId, NetworkData, NetworkServer, ServerNetworkEvent};
+use bevy_spicy_networking::{ConnectionId, NetworkData, NetworkServer, ServerNetworkEvent};
 use std::net::SocketAddr;
 use std::time::Duration;
 
@@ -17,7 +17,7 @@ fn main() {
 
     // Before we can register the potential message types, we
     // need to add the plugin
-    app.add_plugin(bevy_networking_simple::ServerPlugin);
+    app.add_plugin(bevy_spicy_networking::ServerPlugin);
 
     // A good way to ensure that you are not forgetting to register
     // any messages is to register them where they are defined!

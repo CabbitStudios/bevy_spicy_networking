@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy_networking_simple::{ClientNetworkEvent, NetworkClient, NetworkData, NetworkSettings};
+use bevy_spicy_networking::{ClientNetworkEvent, NetworkClient, NetworkData, NetworkSettings};
 use std::net::SocketAddr;
 mod shared;
 
@@ -10,7 +10,7 @@ fn main() {
 
     // You need to add the `ClientPlugin` first before you can register
     // `ClientMessage`s
-    app.add_plugin(bevy_networking_simple::ClientPlugin);
+    app.add_plugin(bevy_spicy_networking::ClientPlugin);
 
     // A good way to ensure that you are not forgetting to register
     // any messages is to register them where they are defined!
