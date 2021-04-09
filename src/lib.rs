@@ -76,7 +76,7 @@ struct UserInput;
 impl NetworkMessage for UserInput {}
 
 impl ClientMessage for UserInput {
-    const NAME: &'static str = "example:WorldUpdate";
+    const NAME: &'static str = "example:UserInput";
 }
 
 fn main() {
