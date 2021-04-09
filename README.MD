@@ -27,11 +27,11 @@ is more complete.)
 Bevy Version Compatibility
 --------------------------
 
-`bevy_spicy_networking` uses the same minor versioning as `bevy` does, starting at `0.5`. Meaning that `bevy_spicy_networking 0.5` is compatible with `bevy 0.5`.
-This also means that this crate will only get stable once bevy is also stable. 
+|:----:|:----:|
+| Bevy Spicy Networking | Bevy |
+| 0.5 | 0.5 |
+|-----|-----|
 
-Current crate version: [![crates.io](https://img.shields.io/crates/v/bevy_spicy_networking)](https://crates.io/crates/bevy_spicy_networking)  
-Current bevy version: [![crates.io](https://img.shields.io/crates/v/bevy)](https://crates.io/crates/bevy)
 
 Roadmap
 -------
