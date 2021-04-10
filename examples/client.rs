@@ -77,6 +77,7 @@ fn handle_network_events(
 
 struct GlobalChatSettings {
     chat_style: TextStyle,
+    author_style: TextStyle,
 }
 
 impl FromWorld for GlobalChatSettings {
@@ -89,6 +90,11 @@ impl FromWorld for GlobalChatSettings {
                 font_size: 20.,
                 color: Color::BLACK,
             },
+            author_style: TextStyle {
+                font: asset_server.load("fonts/OpenSans-Regular.ttf"),
+                font_size: 20.,
+                color: Color::RED,
+            },
         }
     }
 }
@@ -99,12 +105,17 @@ enum ChatMessage {
 }
 
 impl ChatMessage {
-    fn to_text(&self) -> String {
+    fn get_author(&self) -> String {
         match self {
-            ChatMessage::SystemMessage(SystemMessage(msg)) => format!("[SYSTEM] {}", msg),
-            ChatMessage::UserMessage(UserMessage { user, message }) => {
-                format!("{}: {}", user, message)
-            }
+            ChatMessage::SystemMessage(_) => "SYSTEM".to_string(),
+            ChatMessage::UserMessage(UserMessage { user, .. }) => user.clone(),
+        }
+    }
+
+    fn get_text(&self) -> String {
+        match self {
+            ChatMessage::SystemMessage(SystemMessage(msg)) => msg.clone(),
+            ChatMessage::UserMessage(UserMessage { message, .. }) => message.clone(),
         }
     }
 }
@@ -253,10 +264,17 @@ fn handle_chat_area(
     let sections = messages
         .messages
         .iter()
-        .map(|msg| msg.to_text())
-        .map(|text| TextSection {
-            value: format!("{}\n", text),
-            style: chat_settings.chat_style.clone(),
+        .flat_map(|msg| {
+            std::array::IntoIter::new([
+                TextSection {
+                    value: format!("{}: ", msg.get_author()),
+                    style: chat_settings.author_style.clone(),
+                },
+                TextSection {
+                    value: format!("{}\n", msg.get_text()),
+                    style: chat_settings.chat_style.clone(),
+                },
+            ])
         })
         .collect::<Vec<_>>();
 
