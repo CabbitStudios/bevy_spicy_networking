@@ -1,5 +1,5 @@
+<h1 align="center">🌶🌶🌶 Spicy Networking for Bevy</h1>
 <p align="center">
-    <h1>🌶🌶🌶 Spicy Networking for Bevy</h1>
     <a href="https://crates.io/crates/bevy_spicy_networking">
         <img src="https://img.shields.io/crates/v/bevy_spicy_networking?logo=rust" alt="crates.io">
     </a>
