@@ -90,7 +90,7 @@ impl NetworkServer {
     /// If you are already listening for new connections, then this will disconnect existing connections first
     pub fn listen(&mut self, addr: impl ToSocketAddrs + Send) -> Result<(), NetworkError> {
         self.stop();
-        
+
         let listener = self
             .runtime
             .block_on(async move { TcpListener::bind(addr).await })?;
@@ -166,7 +166,6 @@ impl NetworkServer {
         }
     }
 
-
     /// Disconnect all clients and stop listening for new ones
     ///
     /// ## Notes
@@ -186,7 +185,6 @@ impl NetworkServer {
 
     /// Disconnect a specific client
     pub fn disconnect(&self, conn_id: ConnectionId) -> Result<(), NetworkError> {
-
         let connection = if let Some(conn) = self.established_connections.remove(&conn_id) {
             conn
         } else {
@@ -244,8 +242,8 @@ pub(crate) fn handle_new_incoming_connections(
                                     Ok(len) => len as usize,
                                     Err(err) => {
                                         // If we get an EOF here, the connection was broken and we simply report a 'disconnected' signal
-                                        if err.kind() == std::io::ErrorKind::UnexpectedEof { break } 
-                                            
+                                        if err.kind() == std::io::ErrorKind::UnexpectedEof { break }
+
                                         error!("Encountered error while reading length [{}]: {}", conn_id, err);
                                         break;
                                     }
@@ -285,7 +283,7 @@ pub(crate) fn handle_new_incoming_connections(
                                         error!("Could not find existing entries for message kinds: {:?}", packet);
                                     }
                                 }
-                                
+
                                 debug!("Received new message of length: {}", length);
                             }
 

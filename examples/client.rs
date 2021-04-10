@@ -64,7 +64,7 @@ fn handle_network_events(
             }
             ClientNetworkEvent::Error(err) => {
                 let mut messages = messages.single_mut().unwrap();
-                
+
                 messages.add(UserMessage::new(String::from("SYSTEM"), err.to_string()));
             }
         }

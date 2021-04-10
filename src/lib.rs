@@ -131,7 +131,7 @@ fn handle_connection_events(
 ```
 As you can see, they are both quite similar, and provide everything a basic networked game needs.
 
-For a more 
+For a more
 
 ## Caveats
 

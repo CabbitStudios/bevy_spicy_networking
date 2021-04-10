@@ -14,7 +14,6 @@ fn main() {
     app.add_plugins(MinimalPlugins);
     app.add_plugin(bevy::log::LogPlugin::default());
 
-
     // Before we can register the potential message types, we
     // need to add the plugin
     app.add_plugin(bevy_spicy_networking::ServerPlugin);
@@ -61,7 +60,7 @@ fn handle_connection_events(
         match event {
             ServerNetworkEvent::Connected(conn_id) => {
                 commands.spawn_bundle((Player(*conn_id),));
-                
+
                 // Broadcasting sends the message to all connected players! (Including the just connected one in this case)
                 net.broadcast(shared::NewChatMessage {
                     name: String::from("SERVER"),
