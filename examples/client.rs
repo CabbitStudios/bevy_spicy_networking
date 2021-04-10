@@ -179,39 +179,36 @@ fn handle_connect_button(
 
     for (interaction, children) in interaction_query.iter() {
         let mut text = text_query.get_mut(children[0]).unwrap();
-        match interaction {
-            Interaction::Clicked => {
-                text.sections[0].value = String::from("Connecting...");
-                messages.add(SystemMessage::new("Connecting to server..."));
+        if let Interaction::Clicked = interaction {
+            text.sections[0].value = String::from("Connecting...");
+            messages.add(SystemMessage::new("Connecting to server..."));
 
-                let ip_address = "127.0.0.1".parse().unwrap();
+            let ip_address = "127.0.0.1".parse().unwrap();
 
-                info!("Address of the server: {}", ip_address);
+            info!("Address of the server: {}", ip_address);
 
-                let socket_address = SocketAddr::new(ip_address, 9999);
+            let socket_address = SocketAddr::new(ip_address, 9999);
 
-                match net.connect(
-                    socket_address,
-                    NetworkSettings {
-                        max_packet_length: 10 * 1024 * 1024,
-                    },
-                ) {
-                    Ok(_) => {
-                        messages.add(SystemMessage::new(format!(
-                            "Succesfully connected to server!"
-                        )));
-                        text.sections[0].value = String::from("Disconnect");
-                    }
-                    Err(err) => {
-                        messages.add(SystemMessage::new(format!(
-                            "Could not connect to server: {}",
-                            err
-                        )));
-                        text.sections[0].value = String::from("Connect to server");
-                    }
+            match net.connect(
+                socket_address,
+                NetworkSettings {
+                    max_packet_length: 10 * 1024 * 1024,
+                },
+            ) {
+                Ok(_) => {
+                    messages.add(SystemMessage::new(
+                        "Succesfully connected to server!".to_string()
+                    ));
+                    text.sections[0].value = String::from("Disconnect");
+                }
+                Err(err) => {
+                    messages.add(SystemMessage::new(format!(
+                        "Could not connect to server: {}",
+                        err
+                    )));
+                    text.sections[0].value = String::from("Connect to server");
                 }
             }
-            _ => (),
         }
     }
 }
@@ -226,19 +223,16 @@ fn handle_message_button(
     let mut messages = messages.single_mut().unwrap();
 
     for interaction in interaction_query.iter() {
-        match interaction {
-            Interaction::Clicked => {
-                match net.send_message(shared::UserChatMessage {
-                    message: String::from("Hello there!"),
-                }) {
-                    Ok(()) => (),
-                    Err(err) => messages.add(SystemMessage::new(format!(
-                        "Could not send message: {}",
-                        err
-                    ))),
-                }
+        if let Interaction::Clicked = interaction {
+            match net.send_message(shared::UserChatMessage {
+                message: String::from("Hello there!"),
+            }) {
+                Ok(()) => (),
+                Err(err) => messages.add(SystemMessage::new(format!(
+                    "Could not send message: {}",
+                    err
+                ))),
             }
-            _ => (),
         }
     }
 }
@@ -335,7 +329,7 @@ fn setup_ui(
                                     TextStyle {
                                         font: asset_server.load("fonts/Staatliches-Regular.ttf"),
                                         font_size: 40.,
-                                        color: Color::BLACK.into(),
+                                        color: Color::BLACK,
                                     },
                                     TextAlignment {
                                         vertical: VerticalAlign::Center,
@@ -364,7 +358,7 @@ fn setup_ui(
                                     TextStyle {
                                         font: asset_server.load("fonts/Staatliches-Regular.ttf"),
                                         font_size: 40.,
-                                        color: Color::BLACK.into(),
+                                        color: Color::BLACK,
                                     },
                                     TextAlignment {
                                         vertical: VerticalAlign::Center,

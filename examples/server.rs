@@ -57,18 +57,15 @@ fn handle_connection_events(
     mut network_events: EventReader<ServerNetworkEvent>,
 ) {
     for event in network_events.iter() {
-        match event {
-            ServerNetworkEvent::Connected(conn_id) => {
-                commands.spawn_bundle((Player(*conn_id),));
+        if let ServerNetworkEvent::Connected(conn_id) = event {
+            commands.spawn_bundle((Player(*conn_id),));
 
-                // Broadcasting sends the message to all connected players! (Including the just connected one in this case)
-                net.broadcast(shared::NewChatMessage {
-                    name: String::from("SERVER"),
-                    message: format!("New user connected; {}", conn_id),
-                });
-                info!("New player connected: {}", conn_id);
-            }
-            _ => (),
+            // Broadcasting sends the message to all connected players! (Including the just connected one in this case)
+            net.broadcast(shared::NewChatMessage {
+                name: String::from("SERVER"),
+                message: format!("New user connected; {}", conn_id),
+            });
+            info!("New player connected: {}", conn_id);
         }
     }
 }
