@@ -1,7 +1,5 @@
-🌶🌶🌶 Spicy Networking for Bevy 
-================================
-
 <p align="center">
+    <h1>🌶🌶🌶 Spicy Networking for Bevy</h1>
     <a href="https://crates.io/crates/bevy_spicy_networking">
         <img src="https://img.shields.io/crates/v/bevy_spicy_networking?logo=rust" alt="crates.io">
     </a>
@@ -20,13 +18,12 @@ Simply add either the server/client plugins, register the types of messages you 
 
 It is meant as a unifying crate for networking. Other crates can extend your game by registering their own messages. This is achieved through the amazing [`typetag`](https://github.com/dtolnay/typetag) crate.
 
-- [🌶🌶🌶 Spicy Networking for Bevy](#-spicy-networking-for-bevy)
-  - [Documentation](#documentation)
-    - [Quickstart](#quickstart)
-  - [Bevy Version Compatibility](#bevy-version-compatibility)
-  - [Supported Platforms](#supported-platforms)
-  - [Roadmap](#roadmap)
-  - [Contributing](#contributing)
+- [Documentation](#documentation)
+  - [Quickstart](#quickstart)
+- [Bevy Version Compatibility](#bevy-version-compatibility)
+- [Supported Platforms](#supported-platforms)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
 
 
 Documentation
