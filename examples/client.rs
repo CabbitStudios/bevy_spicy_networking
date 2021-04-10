@@ -197,7 +197,7 @@ fn handle_connect_button(
             ) {
                 Ok(_) => {
                     messages.add(SystemMessage::new(
-                        "Succesfully connected to server!".to_string()
+                        "Succesfully connected to server!".to_string(),
                     ));
                     text.sections[0].value = String::from("Disconnect");
                 }
