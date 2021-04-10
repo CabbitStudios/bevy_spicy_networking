@@ -275,6 +275,13 @@ impl AppNetworkClientMessage for AppBuilder {
     fn listen_for_client_message<T: ClientMessage>(&mut self) {
         let client = self.world().get_resource::<NetworkClient>().unwrap();
 
+        debug!("Registered a new ClientMessage: {}", T::NAME);
+
+        assert!(
+            !client.recv_message_map.contains_key(T::NAME),
+            "Duplicate registration of ClientMessage: {}",
+            T::NAME
+        );
         client.recv_message_map.insert(T::NAME, Vec::new());
 
         self.add_event::<NetworkData<T>>();

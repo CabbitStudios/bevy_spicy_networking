@@ -364,11 +364,16 @@ pub trait AppNetworkServerMessage {
 
 impl AppNetworkServerMessage for AppBuilder {
     fn listen_for_server_message<T: ServerMessage>(&mut self) {
-        let client = self.world().get_resource::<NetworkServer>().unwrap();
+        let server = self.world().get_resource::<NetworkServer>().unwrap();
 
         debug!("Registered a new ServerMessage: {}", T::NAME);
 
-        client.recv_message_map.insert(T::NAME, Vec::new());
+        assert!(
+            !server.recv_message_map.contains_key(T::NAME),
+            "Duplicate registration of ServerMessage: {}",
+            T::NAME
+        );
+        server.recv_message_map.insert(T::NAME, Vec::new());
         self.add_event::<NetworkData<T>>();
         self.add_system_to_stage(CoreStage::PreUpdate, register_server_message::<T>.system());
     }
