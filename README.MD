@@ -18,11 +18,15 @@ Simply add either the server/client plugins, register the types of messages you 
 
 It is meant as a unifying crate for networking. Other crates can extend your game by registering their own messages. This is achieved through the amazing [`typetag`](https://github.com/dtolnay/typetag) crate.
 
+<hr>
+
+### Contents
 - [Documentation](#documentation)
   - [Quickstart](#quickstart)
 - [Bevy Version Compatibility](#bevy-version-compatibility)
 - [Supported Platforms](#supported-platforms)
 - [Roadmap](#roadmap)
+- [Notable other crates](#notable-other-crates)
 - [Contributing](#contributing)
 
 
@@ -115,6 +119,11 @@ Roadmap
 
 Currently `bevy_spicy_networking` uses TCP only. This will change at some point, with individual messages being able to specify how they should be delivered. This change will be compatible, or with only minor changes necessary.
 
+
+Notable other crates
+--------------------
+
+> Currently none, you can help by expanding this list. Just send a PR with a link to your repository/crate.
 
 Contributing
 ------------
