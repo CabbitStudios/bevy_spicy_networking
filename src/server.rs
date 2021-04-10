@@ -364,7 +364,7 @@ pub trait AppNetworkServerMessage {
 
 impl AppNetworkServerMessage for AppBuilder {
     fn listen_for_server_message<T: ServerMessage>(&mut self) {
-        let server = self.world().get_resource::<NetworkServer>().unwrap();
+        let server = self.world().get_resource::<NetworkServer>().expect("Could not find `NetworkServer`. Be sure to include the `ServerPlugin` before listening for server messages.");
 
         debug!("Registered a new ServerMessage: {}", T::NAME);
 

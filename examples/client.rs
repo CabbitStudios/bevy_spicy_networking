@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity)]
+
 use bevy::prelude::*;
 use bevy_spicy_networking::{ClientNetworkEvent, NetworkClient, NetworkData, NetworkSettings};
 use std::net::SocketAddr;

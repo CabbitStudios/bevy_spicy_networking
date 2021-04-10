@@ -7,8 +7,10 @@
     unsafe_code,
     unstable_features,
     unused_import_braces,
-    unused_qualifications
+    unused_qualifications,
+    clippy::unwrap_used
 )]
+#![allow(clippy::type_complexity)]
 
 /*!
 A spicy simple networking plugin for Bevy

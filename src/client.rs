@@ -273,7 +273,7 @@ pub trait AppNetworkClientMessage {
 
 impl AppNetworkClientMessage for AppBuilder {
     fn listen_for_client_message<T: ClientMessage>(&mut self) {
-        let client = self.world().get_resource::<NetworkClient>().unwrap();
+        let client = self.world().get_resource::<NetworkClient>().expect("Could not find `NetworkClient`. Be sure to include the `ClientPlugin` before listening for client messages.");
 
         debug!("Registered a new ClientMessage: {}", T::NAME);
 
