@@ -57,17 +57,6 @@ jobs:
           CARGO_INCREMENTAL: 0
           RUSTFLAGS: "-C debuginfo=0 -D warnings"
 
-  build-android:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v2
-    - name: Install Android targets
-      run: rustup target add aarch64-linux-android armv7-linux-androideabi
-    - name: Install Cargo APK
-      run: cargo install cargo-apk
-    - name: Build APK
-      run: cargo apk build --example android
-
   clean:
     runs-on: ubuntu-latest
     steps:
