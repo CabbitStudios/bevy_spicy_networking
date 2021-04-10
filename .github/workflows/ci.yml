@@ -75,7 +75,7 @@ jobs:
 
       - uses: actions-rs/toolchain@v1
         with:
-          toolchain: nightly-2020-12-07
+          toolchain: nightly-2021-03-24
           components: rustfmt, clippy
           override: true
 
@@ -86,7 +86,7 @@ jobs:
         run: sudo apt-get update; sudo apt-get install --no-install-recommends libudev-dev
 
       - name: Check the format
-        run: cargo +nightly-2020-12-07 fmt --all -- --check
+        run: cargo +nightly-2021-03-24 fmt --all -- --check
 
       # type complexity must be ignored because we use huge templates for queries
       # -A clippy::manual-strip: strip_prefix support was added in 1.45. we want to support earlier rust versions
