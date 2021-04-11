@@ -37,9 +37,9 @@ It is meant as a unifying crate for networking. Other crates can extend your gam
 Documentation
 -------------
 
-You can find the an [**online documentation**](https://docs.rs/bevy_spicy_networking), or build it yourself by cloning this repo and running `cargo doc -p bevy_spicy_networking`.
+You can check out the [**online documentation**](https://docs.rs/bevy_spicy_networking), or build it yourself by cloning this repo and running `cargo doc -p bevy_spicy_networking`.
 
-For examples, be sure to check out the [examples directory](https://github.com/CabbitStudios/bevy_spicy_networking/tree/master/examples).
+For examples, check out the [examples directory](https://github.com/CabbitStudios/bevy_spicy_networking/tree/master/examples).
 
 - In `server.rs` you will find a simple chat server, that broadcasts the messages it receives from clients
 - In `client.rs` you will find a simple graphical chat client, where you can connect to a server and send messages to
