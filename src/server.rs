@@ -283,7 +283,7 @@ pub(crate) fn handle_new_incoming_connections(
 
                                 trace!("Read buffer of length {}", length);
 
-                                let packet: NetworkPacket = match serde_json::from_slice(&buffer[..length]) {
+                                let packet: NetworkPacket = match bincode::deserialize(&buffer[..length]) {
                                     Ok(packet) => packet,
                                     Err(err) => {
                                         error!("Failed to decode network packet from [{}]: {}", conn_id, err);
@@ -315,7 +315,7 @@ pub(crate) fn handle_new_incoming_connections(
                             let mut send_socket = send_socket;
 
                             while let Some(message) = recv_message.recv().await {
-                                let encoded = match serde_json::to_vec(&message) {
+                                let encoded = match bincode::serialize(&message) {
                                     Ok(encoded) => encoded,
                                     Err(err) =>  {
                                         error!("Could not encode packet {:?}: {}", message, err);

@@ -572,7 +572,6 @@ dependencies = [
  "derive_more",
  "downcast-rs",
  "serde",
- "serde_json",
  "thiserror",
  "tokio",
  "typetag",

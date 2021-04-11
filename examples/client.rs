@@ -68,9 +68,7 @@ fn handle_network_events(
             }
 
             ClientNetworkEvent::Disconnected => {
-                messages.add(SystemMessage::new(
-                    "Disconnected from server!".to_string(),
-                ));
+                messages.add(SystemMessage::new("Disconnected from server!".to_string()));
                 text.sections[0].value = String::from("Connect to server");
             }
             ClientNetworkEvent::Error(err) => {
