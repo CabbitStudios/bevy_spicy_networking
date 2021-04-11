@@ -1,5 +1,5 @@
+<img align="left" src="assets/spicy_networking_logo.svg" width="128">
 <h1 align="center">
-    <img src="assets/spicy_networking_logo.svg" width="64">
     Spicy Networking for Bevy
 </h1>
 
