@@ -317,5 +317,9 @@ impl Plugin for ClientPlugin {
             CoreStage::PreUpdate,
             client::send_client_network_events.system(),
         );
+        app.add_system_to_stage(
+            CoreStage::PreUpdate,
+            client::handle_connection_event.system(),
+        );
     }
 }

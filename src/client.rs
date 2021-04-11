@@ -40,6 +40,7 @@ pub struct NetworkClient {
     server_connection: Option<ServerConnection>,
     recv_message_map: Arc<DashMap<&'static str, Vec<Box<dyn NetworkMessage>>>>,
     network_events: SyncChannel<ClientNetworkEvent>,
+    connection_events: SyncChannel<(TcpStream, SocketAddr, NetworkSettings)>,
 }
 
 impl std::fmt::Debug for NetworkClient {
@@ -64,6 +65,7 @@ impl NetworkClient {
             server_connection: None,
             recv_message_map: Arc::new(DashMap::new()),
             network_events: SyncChannel::new(),
+            connection_events: SyncChannel::new(),
         }
     }
 
@@ -73,152 +75,49 @@ impl NetworkClient {
     /// This will disconnect you first from any existing server connections
     pub fn connect(
         &mut self,
-        addr: impl ToSocketAddrs + Send,
+        addr: impl ToSocketAddrs + Send + 'static,
         network_settings: NetworkSettings,
-    ) -> Result<(), NetworkError> {
+    ) {
         debug!("Starting connection");
 
         self.disconnect();
 
-        let connection = self
-            .runtime
-            .block_on(async move { TcpStream::connect(addr).await })?;
+        let network_error_sender = self.network_events.sender.clone();
+        let connection_event_sender = self.connection_events.sender.clone();
 
-        let peer_addr = connection.peer_addr()?;
-
-        debug!("Connected to: {:?}", peer_addr);
-
-        let (read_socket, send_socket) = connection.into_split();
-        let recv_message_map = self.recv_message_map.clone();
-        let (send_message, recv_message) = unbounded_channel();
-        let network_event_sender = self.network_events.sender.clone();
-        let network_event_sender_two = self.network_events.sender.clone();
-
-        self.server_connection = Some(ServerConnection {
-            peer_addr,
-            send_task: self.runtime.spawn(async move {
-                let mut recv_message = recv_message;
-                let mut send_socket = send_socket;
-
-                debug!("Starting new server connection, sending task");
-
-                while let Some(message) = recv_message.recv().await {
-                    let encoded = match serde_json::to_vec(&message) {
-                        Ok(encoded) => encoded,
-                        Err(err) => {
-                            error!("Could not encode packet {:?}: {}", message, err);
-                            continue;
-                        }
-                    };
-
-                    let len = encoded.len();
-                    debug!("Sending a new message of size: {}", len);
-
-                    match send_socket.write_u32(len as u32).await {
+        self.runtime.spawn(async move {
+            let stream = match TcpStream::connect(addr).await {
+                Ok(stream) => stream,
+                Err(error) => {
+                    match network_error_sender
+                        .send(ClientNetworkEvent::Error(NetworkError::Connection(error)))
+                    {
                         Ok(_) => (),
                         Err(err) => {
-                            error!("Could not send packet length: {:?}: {}", len, err);
-                            break;
+                            error!("Could not send error event: {}", err);
                         }
                     }
 
-                    trace!("Sending the content of the message!");
-
-                    match send_socket.write_all(&encoded).await {
-                        Ok(_) => (),
-                        Err(err) => {
-                            error!("Could not send packet: {:?}: {}", message, err);
-                            break;
-                        }
-                    }
-
-                    trace!("Succesfully written all!");
+                    return;
                 }
+            };
 
-                let _ = network_event_sender_two.send(ClientNetworkEvent::Disconnected);
-            }),
-            receive_task: self.runtime.spawn(async move {
-                let mut read_socket = read_socket;
-                let network_settings = network_settings;
-                let recv_message_map = recv_message_map;
+            let addr = stream
+                .peer_addr()
+                .expect("Could not fetch peer_addr of existing stream");
 
-                let mut buffer: Vec<u8> =
-                    (0..network_settings.max_packet_length).map(|_| 0).collect();
-                loop {
-                    let length = match read_socket.read_u32().await {
-                        Ok(len) => len as usize,
-                        Err(err) => {
-                            error!(
-                                "Encountered error while fetching length [{}]: {}",
-                                peer_addr, err
-                            );
-                            break;
-                        }
-                    };
-
-                    if length > network_settings.max_packet_length {
-                        error!(
-                            "Received too large packet from [{}]: {} > {}",
-                            peer_addr, length, network_settings.max_packet_length
-                        );
-                        break;
-                    }
-
-                    match read_socket.read_exact(&mut buffer[..length]).await {
-                        Ok(_) => (),
-                        Err(err) => {
-                            error!(
-                                "Encountered error while fetching stream of length {} [{}]: {}",
-                                length, peer_addr, err
-                            );
-                            break;
-                        }
-                    }
-
-                    let packet: NetworkPacket = match serde_json::from_slice(&buffer[..length]) {
-                        Ok(packet) => packet,
-                        Err(err) => {
-                            error!(
-                                "Failed to decode network packet from [{}]: {}",
-                                peer_addr, err
-                            );
-                            break;
-                        }
-                    };
-
-                    match recv_message_map.get_mut(&packet.kind[..]) {
-                        Some(mut packets) => packets.push(packet.data),
-                        None => {
-                            error!(
-                                "Could not find existing entries for message kinds: {:?}",
-                                packet
-                            );
-                        }
-                    }
-                    debug!("Received message from: {}", peer_addr);
+            match connection_event_sender.send((stream, addr, network_settings)) {
+                Ok(_) => (),
+                Err(err) => {
+                    error!("Could not initiate connection: {}", err);
                 }
-
-                let _ = network_event_sender.send(ClientNetworkEvent::Disconnected);
-            }),
-            send_message,
-        });
-
-        match self
-            .network_events
-            .sender
-            .send(ClientNetworkEvent::Connected)
-        {
-            Ok(_) => (),
-            Err(_) => {
-                error!("Could not send connected event");
-                return Err(NetworkError::NotConnected);
             }
-        }
 
-        Ok(())
+            debug!("Connected to: {:?}", addr);
+        });
     }
 
-    /// Disconnect from a server
+    /// a server
     ///
     /// This operation is idempotent and simply does nothing when you are
     /// not connected to anything
@@ -256,6 +155,14 @@ impl NetworkClient {
         }
 
         Ok(())
+    }
+
+    /// Returns true if the client has an established connection
+    ///
+    /// # Note
+    /// This may return true even if the connection has already been broken on the server side.
+    pub fn is_connected(&self) -> bool {
+        self.server_connection.is_some()
     }
 }
 
@@ -318,22 +225,138 @@ fn register_client_message<T>(
     );
 }
 
+pub fn handle_connection_event(
+    mut net_res: ResMut<NetworkClient>,
+    mut events: EventWriter<ClientNetworkEvent>,
+) {
+    let (connection, peer_addr, network_settings) =
+        match net_res.connection_events.receiver.try_recv() {
+            Ok(event) => event,
+            Err(_err) => {
+                return;
+            }
+        };
+
+    let (read_socket, send_socket) = connection.into_split();
+    let recv_message_map = net_res.recv_message_map.clone();
+    let (send_message, recv_message) = unbounded_channel();
+    let network_event_sender = net_res.network_events.sender.clone();
+    let network_event_sender_two = net_res.network_events.sender.clone();
+
+    net_res.server_connection = Some(ServerConnection {
+        peer_addr,
+        send_task: net_res.runtime.spawn(async move {
+            let mut recv_message = recv_message;
+            let mut send_socket = send_socket;
+
+            debug!("Starting new server connection, sending task");
+
+            while let Some(message) = recv_message.recv().await {
+                let encoded = match serde_json::to_vec(&message) {
+                    Ok(encoded) => encoded,
+                    Err(err) => {
+                        error!("Could not encode packet {:?}: {}", message, err);
+                        continue;
+                    }
+                };
+
+                let len = encoded.len();
+                debug!("Sending a new message of size: {}", len);
+
+                match send_socket.write_u32(len as u32).await {
+                    Ok(_) => (),
+                    Err(err) => {
+                        error!("Could not send packet length: {:?}: {}", len, err);
+                        break;
+                    }
+                }
+
+                trace!("Sending the content of the message!");
+
+                match send_socket.write_all(&encoded).await {
+                    Ok(_) => (),
+                    Err(err) => {
+                        error!("Could not send packet: {:?}: {}", message, err);
+                        break;
+                    }
+                }
+
+                trace!("Succesfully written all!");
+            }
+
+            let _ = network_event_sender_two.send(ClientNetworkEvent::Disconnected);
+        }),
+        receive_task: net_res.runtime.spawn(async move {
+            let mut read_socket = read_socket;
+            let network_settings = network_settings;
+            let recv_message_map = recv_message_map;
+
+            let mut buffer: Vec<u8> = (0..network_settings.max_packet_length).map(|_| 0).collect();
+            loop {
+                let length = match read_socket.read_u32().await {
+                    Ok(len) => len as usize,
+                    Err(err) => {
+                        error!(
+                            "Encountered error while fetching length [{}]: {}",
+                            peer_addr, err
+                        );
+                        break;
+                    }
+                };
+
+                if length > network_settings.max_packet_length {
+                    error!(
+                        "Received too large packet from [{}]: {} > {}",
+                        peer_addr, length, network_settings.max_packet_length
+                    );
+                    break;
+                }
+
+                match read_socket.read_exact(&mut buffer[..length]).await {
+                    Ok(_) => (),
+                    Err(err) => {
+                        error!(
+                            "Encountered error while fetching stream of length {} [{}]: {}",
+                            length, peer_addr, err
+                        );
+                        break;
+                    }
+                }
+
+                let packet: NetworkPacket = match serde_json::from_slice(&buffer[..length]) {
+                    Ok(packet) => packet,
+                    Err(err) => {
+                        error!(
+                            "Failed to decode network packet from [{}]: {}",
+                            peer_addr, err
+                        );
+                        break;
+                    }
+                };
+
+                match recv_message_map.get_mut(&packet.kind[..]) {
+                    Some(mut packets) => packets.push(packet.data),
+                    None => {
+                        error!(
+                            "Could not find existing entries for message kinds: {:?}",
+                            packet
+                        );
+                    }
+                }
+                debug!("Received message from: {}", peer_addr);
+            }
+
+            let _ = network_event_sender.send(ClientNetworkEvent::Disconnected);
+        }),
+        send_message,
+    });
+
+    events.send(ClientNetworkEvent::Connected);
+}
+
 pub fn send_client_network_events(
-    mut client_server: ResMut<NetworkClient>,
+    client_server: ResMut<NetworkClient>,
     mut client_network_events: EventWriter<ClientNetworkEvent>,
 ) {
-    let mut disconnected = false;
-    client_network_events.send_batch(client_server.network_events.receiver.try_iter().inspect(
-        |event| {
-            if std::mem::discriminant(event)
-                == std::mem::discriminant(&ClientNetworkEvent::Disconnected)
-            {
-                disconnected = true;
-            }
-        },
-    ));
-
-    if disconnected {
-        client_server.disconnect();
-    }
+    client_network_events.send_batch(client_server.network_events.receiver.try_iter());
 }

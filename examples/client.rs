@@ -55,18 +55,25 @@ fn handle_network_events(
 ) {
     let connect_children = connect_query.single().unwrap();
     let mut text = text_query.get_mut(connect_children[0]).unwrap();
+    let mut messages = messages.single_mut().unwrap();
+
     for event in new_network_events.iter() {
+        info!("Received event: {:?}", event);
         match event {
             ClientNetworkEvent::Connected => {
-                text.sections[0].value = String::from("Reconnect to server");
+                messages.add(SystemMessage::new(
+                    "Succesfully connected to server!".to_string(),
+                ));
+                text.sections[0].value = String::from("Disconnect");
             }
 
             ClientNetworkEvent::Disconnected => {
+                messages.add(SystemMessage::new(
+                    "Disconnected from server!".to_string(),
+                ));
                 text.sections[0].value = String::from("Connect to server");
             }
             ClientNetworkEvent::Error(err) => {
-                let mut messages = messages.single_mut().unwrap();
-
                 messages.add(UserMessage::new(String::from("SYSTEM"), err.to_string()));
             }
         }
@@ -193,34 +200,24 @@ fn handle_connect_button(
     for (interaction, children) in interaction_query.iter() {
         let mut text = text_query.get_mut(children[0]).unwrap();
         if let Interaction::Clicked = interaction {
-            text.sections[0].value = String::from("Connecting...");
-            messages.add(SystemMessage::new("Connecting to server..."));
+            if net.is_connected() {
+                net.disconnect();
+            } else {
+                text.sections[0].value = String::from("Connecting...");
+                messages.add(SystemMessage::new("Connecting to server..."));
 
-            let ip_address = "127.0.0.1".parse().unwrap();
+                let ip_address = "127.0.0.1".parse().unwrap();
 
-            info!("Address of the server: {}", ip_address);
+                info!("Address of the server: {}", ip_address);
 
-            let socket_address = SocketAddr::new(ip_address, 9999);
+                let socket_address = SocketAddr::new(ip_address, 9999);
 
-            match net.connect(
-                socket_address,
-                NetworkSettings {
-                    max_packet_length: 10 * 1024 * 1024,
-                },
-            ) {
-                Ok(_) => {
-                    messages.add(SystemMessage::new(
-                        "Succesfully connected to server!".to_string(),
-                    ));
-                    text.sections[0].value = String::from("Disconnect");
-                }
-                Err(err) => {
-                    messages.add(SystemMessage::new(format!(
-                        "Could not connect to server: {}",
-                        err
-                    )));
-                    text.sections[0].value = String::from("Connect to server");
-                }
+                net.connect(
+                    socket_address,
+                    NetworkSettings {
+                        max_packet_length: 10 * 1024 * 1024,
+                    },
+                );
             }
         }
     }

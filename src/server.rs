@@ -56,6 +56,7 @@ pub struct NetworkServer {
     established_connections: Arc<DashMap<ConnectionId, ClientConnection>>,
     new_connections: SyncChannel<Result<NewIncomingConnection, NetworkError>>,
     disconnected_connections: SyncChannel<ConnectionId>,
+    error_channel: SyncChannel<NetworkError>,
     server_handle: Option<JoinHandle<()>>,
 }
 
@@ -80,6 +81,7 @@ impl NetworkServer {
             established_connections: Arc::new(DashMap::new()),
             new_connections: SyncChannel::new(),
             disconnected_connections: SyncChannel::new(),
+            error_channel: SyncChannel::new(),
             server_handle: None,
         }
     }
@@ -88,21 +90,35 @@ impl NetworkServer {
     ///
     /// ## Note
     /// If you are already listening for new connections, then this will disconnect existing connections first
-    pub fn listen(&mut self, addr: impl ToSocketAddrs + Send) -> Result<(), NetworkError> {
+    pub fn listen(
+        &mut self,
+        addr: impl ToSocketAddrs + Send + 'static,
+    ) -> Result<(), NetworkError> {
         self.stop();
 
-        let listener = self
-            .runtime
-            .block_on(async move { TcpListener::bind(addr).await })?;
-
         let new_connections = self.new_connections.sender.clone();
+        let error_sender = self.error_channel.sender.clone();
 
         let listen_loop = async move {
+            let listener = match TcpListener::bind(addr).await {
+                Ok(listener) => listener,
+                Err(err) => {
+                    match error_sender.send(NetworkError::Listen(err)) {
+                        Ok(_) => (),
+                        Err(err) => {
+                            error!("Could not send listen error: {}", err);
+                        }
+                    }
+
+                    return;
+                }
+            };
+
             let new_connections = new_connections;
             loop {
                 let resp = match listener.accept().await {
                     Ok((socket, addr)) => Ok(NewIncomingConnection { socket, addr }),
-                    Err(error) => Err(error.into()),
+                    Err(error) => Err(NetworkError::Accept(error)),
                 };
 
                 match new_connections.send(resp) {
