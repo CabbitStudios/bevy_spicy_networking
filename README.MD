@@ -26,7 +26,7 @@ It is meant as a unifying crate for networking. Other crates can extend your gam
 - [Bevy Version Compatibility](#bevy-version-compatibility)
 - [Supported Platforms](#supported-platforms)
 - [Roadmap](#roadmap)
-- [Notable other crates](#notable-other-crates)
+- [Crates using `bevy_spicy_networking`](#crates-using-bevy_spicy_networking)
 - [Contributing](#contributing)
 
 
@@ -120,10 +120,14 @@ Roadmap
 Currently `bevy_spicy_networking` uses TCP only. This will change at some point, with individual messages being able to specify how they should be delivered. This change will be compatible, or with only minor changes necessary.
 
 
-Notable other crates
+Crates using `bevy_spicy_networking`
 --------------------
 
-> Currently none, you can help by expanding this list. Just send a PR with a link to your repository/crate.
+> Currently none, you can help by expanding this list. Just send a PR and add it to the table below!
+
+| Name | Version |
+|:----:|:-------:|
+|  -   |    -    |
 
 Contributing
 ------------
