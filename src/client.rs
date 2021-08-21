@@ -242,42 +242,51 @@ pub fn handle_connection_event(
     let (send_message, recv_message) = unbounded_channel();
     let network_event_sender = net_res.network_events.sender.clone();
     let network_event_sender_two = net_res.network_events.sender.clone();
+    let send_settings = network_settings.clone();
 
     net_res.server_connection = Some(ServerConnection {
         peer_addr,
         send_task: net_res.runtime.spawn(async move {
             let mut recv_message = recv_message;
             let mut send_socket = send_socket;
+            let mut buffer: Vec<u8> = vec![0; send_settings.max_packet_length];
 
             debug!("Starting new server connection, sending task");
 
             while let Some(message) = recv_message.recv().await {
-                let encoded = match bincode::serialize(&message) {
-                    Ok(encoded) => encoded,
+                let size = match bincode::serialized_size(&message) {
+                    Ok(size) => size as usize,
                     Err(err) => {
-                        error!("Could not encode packet {:?}: {}", message, err);
+                        error!("Could not get the size of the packet {:?}: {}", message, err);
                         continue;
                     }
                 };
 
-                let len = encoded.len();
-                debug!("Sending a new message of size: {}", len);
-
-                match send_socket.write_u32(len as u32).await {
+                match bincode::serialize_into(&mut buffer[0..size], &message) {
                     Ok(_) => (),
                     Err(err) => {
-                        error!("Could not send packet length: {:?}: {}", len, err);
+                        error!("Coult not serialize packet into buffer {:?}: {}", message, err);
+                        continue;
+                    }
+                };
+
+                debug!("Sending a new message of size: {}", size);
+
+                match send_socket.write_u32(size as u32).await {
+                    Ok(_) => (),
+                    Err(err) => {
+                        error!("Could not send packet length: {:?}: {}", size, err);
                         break;
                     }
                 }
 
                 trace!("Sending the content of the message!");
 
-                match send_socket.write_all(&encoded).await {
+                match send_socket.write_all(&buffer[0..size]).await {
                     Ok(_) => (),
                     Err(err) => {
                         error!("Could not send packet: {:?}: {}", message, err);
-                        break;
+                        return;
                     }
                 }
 
@@ -291,7 +300,7 @@ pub fn handle_connection_event(
             let network_settings = network_settings;
             let recv_message_map = recv_message_map;
 
-            let mut buffer: Vec<u8> = (0..network_settings.max_packet_length).map(|_| 0).collect();
+            let mut buffer: Vec<u8> = vec![0; network_settings.max_packet_length];
             loop {
                 let length = match read_socket.read_u32().await {
                     Ok(len) => len as usize,

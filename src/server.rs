@@ -233,6 +233,7 @@ pub(crate) fn handle_new_incoming_connections(
 
                 let (read_socket, send_socket) = new_conn.socket.into_split();
                 let recv_message_map = server.recv_message_map.clone();
+                let send_settings = network_settings.clone();
                 let network_settings = network_settings.clone();
                 let disconnected_connections = server.disconnected_connections.sender.clone();
 
@@ -248,7 +249,7 @@ pub(crate) fn handle_new_incoming_connections(
 
                             let mut read_socket = read_socket;
 
-                            let mut buffer: Vec<u8> = (0..network_settings.max_packet_length).map(|_| 0).collect();
+                            let mut buffer: Vec<u8> = vec![0; network_settings.max_packet_length];
 
                             trace!("Starting listen task for {}", conn_id);
                             loop {
@@ -313,27 +314,34 @@ pub(crate) fn handle_new_incoming_connections(
                         send_task: server.runtime.spawn(async move {
                             let mut recv_message = recv_message;
                             let mut send_socket = send_socket;
+                            let mut buffer: Vec<u8> = vec![0; send_settings.max_packet_length];
 
                             while let Some(message) = recv_message.recv().await {
-                                let encoded = match bincode::serialize(&message) {
-                                    Ok(encoded) => encoded,
-                                    Err(err) =>  {
-                                        error!("Could not encode packet {:?}: {}", message, err);
+                                let size = match bincode::serialized_size(&message) {
+                                    Ok(size) => size as usize,
+                                    Err(err) => {
+                                        error!("Could not get the size of the packet {:?}: {}", message, err);
                                         continue;
                                     }
                                 };
 
-                                let len = encoded.len();
-
-                                match send_socket.write_u32(len as u32).await {
+                                match bincode::serialize_into(&mut buffer[0..size], &message) {
                                     Ok(_) => (),
                                     Err(err) => {
-                                        error!("Could not send packet length: {:?}: {}", len, err);
+                                        error!("Coult not serialize packet into buffer {:?}: {}", message, err);
+                                        continue;
+                                    }
+                                };
+
+                                match send_socket.write_u32(size as u32).await {
+                                    Ok(_) => (),
+                                    Err(err) => {
+                                        error!("Could not send packet length: {:?}: {}", size, err);
                                         return;
                                     }
                                 }
 
-                                match send_socket.write_all(&encoded).await {
+                                match send_socket.write_all(&buffer[0..size]).await {
                                     Ok(_) => (),
                                     Err(err) => {
                                         error!("Could not send packet: {:?}: {}", message, err);
