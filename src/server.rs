@@ -13,6 +13,7 @@ use tokio::{
 
 use crate::{
     error::NetworkError,
+    io::{write_size, read_size},
     network_message::{ClientMessage, NetworkMessage, ServerMessage},
     ConnectionId, NetworkData, NetworkPacket, NetworkSettings, ServerNetworkEvent, SyncChannel,
 };
@@ -255,7 +256,7 @@ pub(crate) fn handle_new_incoming_connections(
                             loop {
                                 trace!("Listening for length!");
 
-                                let length = match read_socket.read_u32().await {
+                                let length = match read_size(&mut read_socket).await {
                                     Ok(len) => len as usize,
                                     Err(err) => {
                                         // If we get an EOF here, the connection was broken and we simply report a 'disconnected' signal
@@ -333,7 +334,7 @@ pub(crate) fn handle_new_incoming_connections(
                                     }
                                 };
 
-                                match send_socket.write_u32(size as u32).await {
+                                match write_size(&mut send_socket, size).await {
                                     Ok(_) => (),
                                     Err(err) => {
                                         error!("Could not send packet length: {:?}: {}", size, err);

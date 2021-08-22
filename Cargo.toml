@@ -1,6 +1,6 @@
 [package]
 name = "bevy_spicy_networking"
-version = "0.5.2"
+version = "0.5.3"
 authors = ["Neikos <neikos@neikos.email>"]
 edition = "2018"
 description = "A spicy 🌶🌶🌶 and simple networking plugin for Bevy"
@@ -11,6 +11,10 @@ categories = ["game-development", "network-programming"]
 autoexamples = false
 exclude =  ["assets"]
 resolver = "2"
+
+[features]
+u16-packetsize = []
+default = []
 
 [badges]
 maintenance = { status = "actively-developed" }

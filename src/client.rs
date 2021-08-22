@@ -13,6 +13,7 @@ use tokio::{
 
 use crate::{
     error::NetworkError,
+    io::{write_size, read_size},
     network_message::{ClientMessage, NetworkMessage, ServerMessage},
     ClientNetworkEvent, ConnectionId, NetworkData, NetworkPacket, NetworkSettings, SyncChannel,
 };
@@ -272,7 +273,7 @@ pub fn handle_connection_event(
 
                 debug!("Sending a new message of size: {}", size);
 
-                match send_socket.write_u32(size as u32).await {
+                match write_size(&mut send_socket, size).await {
                     Ok(_) => (),
                     Err(err) => {
                         error!("Could not send packet length: {:?}: {}", size, err);
@@ -302,7 +303,7 @@ pub fn handle_connection_event(
 
             let mut buffer: Vec<u8> = vec![0; network_settings.max_packet_length];
             loop {
-                let length = match read_socket.read_u32().await {
+                let length = match read_size(&mut read_socket).await {
                     Ok(len) => len as usize,
                     Err(err) => {
                         error!(

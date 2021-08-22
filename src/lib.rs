@@ -146,6 +146,7 @@ mod client;
 mod error;
 mod network_message;
 mod server;
+mod io;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -275,13 +276,20 @@ pub struct NetworkSettings {
     ///
     /// ## Default
     /// The default is set to 10MiB
+    /// _note_: If you are using the `u16-packetsize` feature it will default to u16::MAX
     pub max_packet_length: usize,
 }
+
+#[cfg(not(feature = "u16-packetsize"))]
+const DEFAULT_MAX_PACKET_LENGTH: usize = 10 * 1024 * 1024;
+
+#[cfg(feature = "u16-packetsize")]
+const DEFAULT_MAX_PACKET_LENGTH: usize = u16::MAX as usize;
 
 impl Default for NetworkSettings {
     fn default() -> Self {
         NetworkSettings {
-            max_packet_length: 10 * 1024 * 1024,
+            max_packet_length: DEFAULT_MAX_PACKET_LENGTH,
         }
     }
 }

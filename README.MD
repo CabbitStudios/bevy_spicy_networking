@@ -118,6 +118,13 @@ Supported Platforms
 
 Currently only **Linux** and **Windows** are officially supported, I don't see why **MacOS** wouldn't be, but I do not have a Mac to test. If you have a Mac, and wish to test it out and report back, please let me know!
 
+Crate Features
+______________
+
+* `u16-packetsize` : By default the packet header sizes are expected to be u32.
+                     Using this feature cuts back that to u16 if your needs
+                     are more specific and you plan to run small packets.
+
 Roadmap
 -------
 
