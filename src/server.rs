@@ -366,7 +366,7 @@ pub(crate) fn handle_new_incoming_connections(
     }
 }
 
-/// A utility trait on [`AppBuilder`] to easily register [`ServerMessage`]s
+/// A utility trait on [`App`] to easily register [`ServerMessage`]s
 pub trait AppNetworkServerMessage {
     /// Register a server message type
     ///
