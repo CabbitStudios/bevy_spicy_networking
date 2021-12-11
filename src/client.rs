@@ -175,11 +175,11 @@ pub trait AppNetworkClientMessage {
     /// - Add a new event type of [`NetworkData<T>`]
     /// - Register the type for transformation over the wire
     /// - Internal bookkeeping
-    fn listen_for_client_message<T: ClientMessage>(&mut self);
+    fn listen_for_client_message<T: ClientMessage>(&mut self) -> &mut Self;
 }
 
 impl AppNetworkClientMessage for AppBuilder {
-    fn listen_for_client_message<T: ClientMessage>(&mut self) {
+    fn listen_for_client_message<T: ClientMessage>(&mut self) -> &mut Self {
         let client = self.world().get_resource::<NetworkClient>().expect("Could not find `NetworkClient`. Be sure to include the `ClientPlugin` before listening for client messages.");
 
         debug!("Registered a new ClientMessage: {}", T::NAME);
@@ -192,7 +192,7 @@ impl AppNetworkClientMessage for AppBuilder {
         client.recv_message_map.insert(T::NAME, Vec::new());
 
         self.add_event::<NetworkData<T>>();
-        self.add_system_to_stage(CoreStage::PreUpdate, register_client_message::<T>.system());
+        self.add_system_to_stage(CoreStage::PreUpdate, register_client_message::<T>.system())
     }
 }
 
