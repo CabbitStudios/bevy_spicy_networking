@@ -188,6 +188,7 @@ impl std::fmt::Debug for StandaloneNetworkClient {
 }
 
 impl StandaloneNetworkClient {
+    /// Create a new client
     pub fn new() -> Self {
         Self {
             runtime: tokio::runtime::Builder::new_multi_thread()

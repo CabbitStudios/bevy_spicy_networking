@@ -150,7 +150,7 @@ mod server;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use bevy::{prelude::*, utils::Uuid};
-pub use client::{AppNetworkClientMessage, NetworkClient};
+pub use client::{AppNetworkClientMessage, NetworkClient, StandaloneNetworkClient};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use derive_more::{Deref, Display};
 use error::NetworkError;
