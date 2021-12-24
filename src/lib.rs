@@ -191,6 +191,11 @@ impl ConnectionId {
         self.addr
     }
 
+    /// Get the unique Uuid associated with this connection id
+    pub fn uuid(&self) -> Uuid {
+        self.uuid
+    }
+
     pub(crate) fn server(addr: Option<SocketAddr>) -> ConnectionId {
         ConnectionId {
             uuid: Uuid::nil(),
