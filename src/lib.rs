@@ -150,7 +150,7 @@ mod server;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use bevy::{prelude::*, utils::Uuid};
-pub use client::{AppNetworkClientMessage, NetworkClient};
+pub use client::{AppNetworkClientMessage, NetworkClient, StandaloneNetworkClient};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use derive_more::{Deref, Display};
 use error::NetworkError;
@@ -189,6 +189,11 @@ impl ConnectionId {
     /// This contains the IP/Port information
     pub fn address(&self) -> SocketAddr {
         self.addr
+    }
+
+    /// Get the unique Uuid associated with this connection id
+    pub fn uuid(&self) -> Uuid {
+        self.uuid
     }
 
     pub(crate) fn server(addr: Option<SocketAddr>) -> ConnectionId {
