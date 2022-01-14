@@ -287,12 +287,12 @@ impl Default for NetworkSettings {
 }
 
 #[derive(Default, Copy, Clone, Debug)]
-/// The plugin to add to your bevy [`AppBuilder`](bevy::prelude::AppBuilder) when you want
+/// The plugin to add to your bevy [`App`](bevy::prelude::App) when you want
 /// to instantiate a server
 pub struct ServerPlugin;
 
 impl Plugin for ServerPlugin {
-    fn build(&self, app: &mut AppBuilder) {
+    fn build(&self, app: &mut App) {
         app.insert_resource(server::NetworkServer::new());
         app.add_event::<ServerNetworkEvent>();
         app.init_resource::<NetworkSettings>();
@@ -304,12 +304,12 @@ impl Plugin for ServerPlugin {
 }
 
 #[derive(Default, Copy, Clone, Debug)]
-/// The plugin to add to your bevy [`AppBuilder`](bevy::prelude::AppBuilder) when you want
+/// The plugin to add to your bevy [`App`](bevy::prelude::App) when you want
 /// to instantiate a client
 pub struct ClientPlugin;
 
 impl Plugin for ClientPlugin {
-    fn build(&self, app: &mut AppBuilder) {
+    fn build(&self, app: &mut App) {
         app.insert_resource(client::NetworkClient::new());
         app.add_event::<ClientNetworkEvent>();
         app.init_resource::<NetworkSettings>();
