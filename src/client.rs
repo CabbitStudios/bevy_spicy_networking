@@ -166,7 +166,7 @@ impl NetworkClient {
     }
 }
 
-/// A utility trait on [`AppBuilder`] to easily register [`ClientMessage`]s
+/// A utility trait on [`App`] to easily register [`ClientMessage`]s
 pub trait AppNetworkClientMessage {
     /// Register a client message type
     ///
@@ -178,9 +178,9 @@ pub trait AppNetworkClientMessage {
     fn listen_for_client_message<T: ClientMessage>(&mut self) -> &mut Self;
 }
 
-impl AppNetworkClientMessage for AppBuilder {
+impl AppNetworkClientMessage for App {
     fn listen_for_client_message<T: ClientMessage>(&mut self) -> &mut Self {
-        let client = self.world().get_resource::<NetworkClient>().expect("Could not find `NetworkClient`. Be sure to include the `ClientPlugin` before listening for client messages.");
+        let client = self.world.get_resource::<NetworkClient>().expect("Could not find `NetworkClient`. Be sure to include the `ClientPlugin` before listening for client messages.");
 
         debug!("Registered a new ClientMessage: {}", T::NAME);
 

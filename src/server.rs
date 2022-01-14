@@ -54,7 +54,7 @@ pub struct NetworkServer {
     runtime: Runtime,
     recv_message_map: Arc<DashMap<&'static str, Vec<(ConnectionId, Box<dyn NetworkMessage>)>>>,
     established_connections: Arc<DashMap<ConnectionId, ClientConnection>>,
-    new_connections: SyncChannel<Result<NewIncomingConnection, NetworkError>>,
+    new_connections: SyncChannel<NewIncomingConnection>,
     disconnected_connections: SyncChannel<ConnectionId>,
     error_channel: SyncChannel<NetworkError>,
     server_handle: Option<JoinHandle<()>>,
@@ -117,16 +117,19 @@ impl NetworkServer {
             let new_connections = new_connections;
             loop {
                 let resp = match listener.accept().await {
-                    Ok((socket, addr)) => Ok(NewIncomingConnection { socket, addr }),
-                    Err(error) => Err(NetworkError::Accept(error)),
+                    Ok((socket, addr)) => NewIncomingConnection { socket, addr },
+                    Err(error) =>  {
+                        if let Err(err)  = error_sender.send(NetworkError::Accept(error)){
+                            error!("Cannot accept more errors, channel closed: {}", err);
+                            break;
+                        };
+                        continue;
+                    },
                 };
 
-                match new_connections.send(resp) {
-                    Ok(_) => (),
-                    Err(err) => {
-                        error!("Cannot accept new connections, channel closed: {}", err);
-                        break;
-                    }
+                if let Err(err) = new_connections.send(resp) {
+                    error!("Cannot accept new connections, channel closed: {}", err);
+                    break;
                 }
             }
         };
@@ -218,142 +221,135 @@ pub(crate) fn handle_new_incoming_connections(
     network_settings: Res<NetworkSettings>,
     mut network_events: EventWriter<ServerNetworkEvent>,
 ) {
-    for inc_conn in server.new_connections.receiver.try_iter() {
-        match inc_conn {
-            Ok(new_conn) => {
-                match new_conn.socket.set_nodelay(true) {
-                    Ok(_) => (),
-                    Err(e) => error!("Could not set nodelay for [{}]: {}", new_conn, e),
-                }
+    for new_conn in server.new_connections.receiver.try_iter() {
+            match new_conn.socket.set_nodelay(true) {
+                Ok(_) => (),
+                Err(e) => error!("Could not set nodelay for [{}]: {}", new_conn, e),
+            }
 
-                let conn_id = ConnectionId {
-                    uuid: Uuid::new_v4(),
-                    addr: new_conn.addr,
-                };
+            let conn_id = ConnectionId {
+                uuid: Uuid::new_v4(),
+                addr: new_conn.addr,
+            };
 
-                let (read_socket, send_socket) = new_conn.socket.into_split();
-                let recv_message_map = server.recv_message_map.clone();
-                let network_settings = network_settings.clone();
-                let disconnected_connections = server.disconnected_connections.sender.clone();
+            let (read_socket, send_socket) = new_conn.socket.into_split();
+            let recv_message_map = server.recv_message_map.clone();
+            let network_settings = network_settings.clone();
+            let disconnected_connections = server.disconnected_connections.sender.clone();
 
-                let (send_message, recv_message) = unbounded_channel();
+            let (send_message, recv_message) = unbounded_channel();
 
-                server.established_connections.insert(
-                    conn_id,
-                    ClientConnection {
-                        id: conn_id,
-                        receive_task: server.runtime.spawn(async move {
-                            let recv_message_map = recv_message_map;
-                            let network_settings = network_settings;
+            server.established_connections.insert(
+                conn_id,
+                ClientConnection {
+                    id: conn_id,
+                    receive_task: server.runtime.spawn(async move {
+                        let recv_message_map = recv_message_map;
+                        let network_settings = network_settings;
 
-                            let mut read_socket = read_socket;
+                        let mut read_socket = read_socket;
 
-                            let mut buffer: Vec<u8> = (0..network_settings.max_packet_length).map(|_| 0).collect();
+                        let mut buffer: Vec<u8> = (0..network_settings.max_packet_length).map(|_| 0).collect();
 
-                            trace!("Starting listen task for {}", conn_id);
-                            loop {
-                                trace!("Listening for length!");
+                        trace!("Starting listen task for {}", conn_id);
+                        loop {
+                            trace!("Listening for length!");
 
-                                let length = match read_socket.read_u32().await {
-                                    Ok(len) => len as usize,
-                                    Err(err) => {
-                                        // If we get an EOF here, the connection was broken and we simply report a 'disconnected' signal
-                                        if err.kind() == std::io::ErrorKind::UnexpectedEof { break }
+                            let length = match read_socket.read_u32().await {
+                                Ok(len) => len as usize,
+                                Err(err) => {
+                                    // If we get an EOF here, the connection was broken and we simply report a 'disconnected' signal
+                                    if err.kind() == std::io::ErrorKind::UnexpectedEof { break }
 
-                                        error!("Encountered error while reading length [{}]: {}", conn_id, err);
-                                        break;
-                                    }
-                                };
-
-                                trace!("Received packet with length: {}", length);
-
-                                if length > network_settings.max_packet_length {
-                                    error!("Received too large packet from [{}]: {} > {}", conn_id, length, network_settings.max_packet_length);
+                                    error!("Encountered error while reading length [{}]: {}", conn_id, err);
                                     break;
                                 }
+                            };
 
+                            trace!("Received packet with length: {}", length);
 
-                                match read_socket.read_exact(&mut buffer[..length]).await {
-                                    Ok(_) => (),
-                                    Err(err) => {
-                                        error!("Encountered error while reading stream of length {} [{}]: {}", length, conn_id, err);
-                                        break;
-                                    }
-                                }
-
-                                trace!("Read buffer of length {}", length);
-
-                                let packet: NetworkPacket = match bincode::deserialize(&buffer[..length]) {
-                                    Ok(packet) => packet,
-                                    Err(err) => {
-                                        error!("Failed to decode network packet from [{}]: {}", conn_id, err);
-                                        break;
-                                    }
-                                };
-
-                                trace!("Created a network packet");
-
-                                match recv_message_map.get_mut(&packet.kind[..]) {
-                                    Some(mut packets) => packets.push((conn_id, packet.data)),
-                                    None => {
-                                        error!("Could not find existing entries for message kinds: {:?}", packet);
-                                    }
-                                }
-
-                                debug!("Received new message of length: {}", length);
+                            if length > network_settings.max_packet_length {
+                                error!("Received too large packet from [{}]: {} > {}", conn_id, length, network_settings.max_packet_length);
+                                break;
                             }
 
-                            match disconnected_connections.send(conn_id) {
+
+                            match read_socket.read_exact(&mut buffer[..length]).await {
                                 Ok(_) => (),
-                                Err(_) => {
-                                    error!("Could not send disconnected event, because channel is disconnected");
+                                Err(err) => {
+                                    error!("Encountered error while reading stream of length {} [{}]: {}", length, conn_id, err);
+                                    break;
                                 }
                             }
-                        }),
-                        send_task: server.runtime.spawn(async move {
-                            let mut recv_message = recv_message;
-                            let mut send_socket = send_socket;
 
-                            while let Some(message) = recv_message.recv().await {
-                                let encoded = match bincode::serialize(&message) {
-                                    Ok(encoded) => encoded,
-                                    Err(err) =>  {
-                                        error!("Could not encode packet {:?}: {}", message, err);
-                                        continue;
-                                    }
-                                };
+                            trace!("Read buffer of length {}", length);
 
-                                let len = encoded.len();
-
-                                match send_socket.write_u32(len as u32).await {
-                                    Ok(_) => (),
-                                    Err(err) => {
-                                        error!("Could not send packet length: {:?}: {}", len, err);
-                                        return;
-                                    }
+                            let packet: NetworkPacket = match bincode::deserialize(&buffer[..length]) {
+                                Ok(packet) => packet,
+                                Err(err) => {
+                                    error!("Failed to decode network packet from [{}]: {}", conn_id, err);
+                                    break;
                                 }
+                            };
 
-                                match send_socket.write_all(&encoded).await {
-                                    Ok(_) => (),
-                                    Err(err) => {
-                                        error!("Could not send packet: {:?}: {}", message, err);
-                                        return;
-                                    }
+                            trace!("Created a network packet");
+
+                            match recv_message_map.get_mut(&packet.kind[..]) {
+                                Some(mut packets) => packets.push((conn_id, packet.data)),
+                                None => {
+                                    error!("Could not find existing entries for message kinds: {:?}", packet);
                                 }
                             }
-                        }),
-                        send_message,
-                        addr: new_conn.addr,
-                    },
-                );
 
-                network_events.send(ServerNetworkEvent::Connected(conn_id));
-            }
+                            debug!("Received new message of length: {}", length);
+                        }
 
-            Err(err) => {
-                network_events.send(ServerNetworkEvent::Error(err));
-            }
-        }
+                        match disconnected_connections.send(conn_id) {
+                            Ok(_) => (),
+                            Err(_) => {
+                                error!("Could not send disconnected event, because channel is disconnected");
+                            }
+                        }
+                    }),
+                    send_task: server.runtime.spawn(async move {
+                        let mut recv_message = recv_message;
+                        let mut send_socket = send_socket;
+
+                        while let Some(message) = recv_message.recv().await {
+                            let encoded = match bincode::serialize(&message) {
+                                Ok(encoded) => encoded,
+                                Err(err) =>  {
+                                    error!("Could not encode packet {:?}: {}", message, err);
+                                    continue;
+                                }
+                            };
+
+                            let len = encoded.len();
+
+                            match send_socket.write_u32(len as u32).await {
+                                Ok(_) => (),
+                                Err(err) => {
+                                    error!("Could not send packet length: {:?}: {}", len, err);
+                                    return;
+                                }
+                            }
+
+                            match send_socket.write_all(&encoded).await {
+                                Ok(_) => (),
+                                Err(err) => {
+                                    error!("Could not send packet: {:?}: {}", message, err);
+                                    return;
+                                }
+                            }
+                        }
+                    }),
+                    send_message,
+                    addr: new_conn.addr,
+                },
+            );
+
+            network_events.send(ServerNetworkEvent::Connected(conn_id));
+        
     }
 
     let disconnected_connections = &server.disconnected_connections.receiver;
@@ -366,7 +362,7 @@ pub(crate) fn handle_new_incoming_connections(
     }
 }
 
-/// A utility trait on [`AppBuilder`] to easily register [`ServerMessage`]s
+/// A utility trait on [`App`] to easily register [`ServerMessage`]s
 pub trait AppNetworkServerMessage {
     /// Register a server message type
     ///
@@ -378,9 +374,9 @@ pub trait AppNetworkServerMessage {
     fn listen_for_server_message<T: ServerMessage>(&mut self) -> &mut Self;
 }
 
-impl AppNetworkServerMessage for AppBuilder {
+impl AppNetworkServerMessage for App {
     fn listen_for_server_message<T: ServerMessage>(&mut self) -> &mut Self {
-        let server = self.world().get_resource::<NetworkServer>().expect("Could not find `NetworkServer`. Be sure to include the `ServerPlugin` before listening for server messages.");
+        let server = self.world.get_resource::<NetworkServer>().expect("Could not find `NetworkServer`. Be sure to include the `ServerPlugin` before listening for server messages.");
 
         debug!("Registered a new ServerMessage: {}", T::NAME);
 
