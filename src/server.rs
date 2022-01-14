@@ -10,6 +10,7 @@ use tokio::{
     sync::mpsc::{unbounded_channel, UnboundedSender},
     task::JoinHandle,
 };
+use async_trait::async_trait;
 
 use crate::{
     error::NetworkError,
@@ -46,6 +47,22 @@ impl std::fmt::Debug for ClientConnection {
             .field("addr", &self.addr)
             .finish()
     }
+}
+
+/// A trait used by [`NetworkServer`] to drive a server, this is responsible
+/// for generating the futures that carryout the underlying server logic.
+#[async_trait]
+pub trait NetworkServerProvider{
+    type Listener;
+    type Socket;
+    type ReadHalf;
+    type WriteHalf;
+
+    async fn listen() -> Self::Listener;
+    async fn accept(listener: &mut Self::Listener) -> Self::Socket;
+    async fn read_message(read_half: &mut Self::ReadHalf) -> Result<NetworkPacket, NetworkError>;
+    async fn send_message(write_half: &mut Self::WriteHalf);
+    fn split(combined: Self::Socket) -> (Self::ReadHalf, Self::WriteHalf);
 }
 
 /// An instance of a [`NetworkServer`] is used to listen for new client connections

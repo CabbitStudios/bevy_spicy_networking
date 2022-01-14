@@ -206,7 +206,7 @@ impl ConnectionId {
 
 #[derive(Serialize, Deserialize)]
 /// [`NetworkPacket`]s are untyped packets to be sent over the wire
-struct NetworkPacket {
+pub struct NetworkPacket {
     kind: String,
     data: Box<dyn NetworkMessage>,
 }
