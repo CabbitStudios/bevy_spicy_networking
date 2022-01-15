@@ -10,6 +10,7 @@ use tokio::{
     sync::mpsc::{unbounded_channel, UnboundedSender},
     task::JoinHandle,
 };
+use async_trait::async_trait;
 
 use crate::{
     error::NetworkError,
@@ -19,20 +20,23 @@ use crate::{
 
 #[derive(Display)]
 #[display(fmt = "Incoming Connection from {}", addr)]
-struct NewIncomingConnection {
-    socket: TcpStream,
-    addr: SocketAddr,
+struct NewIncomingConnection<NSP: NetworkServerProvider> {
+    socket: NSP::Socket,
+    addr: NSP::ClientInfo,
 }
 
+/// The servers view of a client.
 pub struct ClientConnection {
     id: ConnectionId,
     receive_task: JoinHandle<()>,
     send_task: JoinHandle<()>,
     send_message: UnboundedSender<NetworkPacket>,
-    addr: SocketAddr,
+    //addr: SocketAddr,
 }
 
 impl ClientConnection {
+
+    /// Close the given connection to a client.
     pub fn stop(self) {
         self.receive_task.abort();
         self.send_task.abort();
@@ -43,24 +47,84 @@ impl std::fmt::Debug for ClientConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ClientConnection")
             .field("id", &self.id)
-            .field("addr", &self.addr)
+            //.field("addr", &self.addr)
             .finish()
     }
 }
 
+/// A trait used by [`NetworkServer`] to drive a server, this is responsible
+/// for generating the futures that carryout the underlying server logic.
+#[async_trait]
+pub trait NetworkServerProvider: 'static + Send + Sync{
+    /// This is to configure particular protocols
+    type NetworkSettings: Send + Sync + Clone;
+
+    /// This is the type given to the listener to start listening.
+    type ListenInfo: Send;
+
+    /// This is extra info returned when a client connects.
+    type ClientInfo: Send;
+
+    /// The type that accepts new connections to the server.
+    type Listener: Send;
+
+    /// The type that acts as a combined sender and reciever for a client.
+    /// This type needs to be able to be split.
+    type Socket: Send;
+
+    /// The read half of the given socket type.
+    type ReadHalf: Send;
+    
+    /// The write half of the given socket type.
+    type WriteHalf: Send;
+
+    /// The parameters used by the read function that need to be created.
+    type ReadParams: Send;
+
+    /// The parameters used by the write function that need to be created.
+    type WriteParams: Send;
+
+    /// The error type associated with this provider.
+    type ProtocolErrors: Send + std::fmt::Debug + std::fmt::Display;
+
+    /// Creates a new listener, this listener will be passed to 
+    /// [`NetworkServerProvider::listener`] to get new connections.
+    async fn listen(listen_info: Self::ListenInfo) -> Result<Self::Listener, Self::ProtocolErrors>;
+
+    /// Recieve a connection.
+    async fn accept<'l>(listener: &'l mut Self::Listener) -> Result<(Self::Socket, Self::ClientInfo), Self::ProtocolErrors>;
+
+    /// Recieve a message from the client.
+    async fn read_message<'a>(read_half: &'a mut Self::ReadHalf, settings: &'a Self::NetworkSettings, read_params: &'a mut Self::ReadParams) -> Result<NetworkPacket, Self::ProtocolErrors>;
+    
+    /// Send a message to the client.
+    async fn send_message<'a>(message: &'a NetworkPacket, write_half: &'a mut Self::WriteHalf, settings: &'a Self::NetworkSettings, write_params: &'a mut Self::WriteParams) -> Result<(), Self::ProtocolErrors>;
+
+    /// Create the [`NetworkServerProvider::ReadParams`] that will be used by the read function.
+    fn init_read<'a> (settings: &'a Self::NetworkSettings) -> Self::ReadParams; 
+
+    /// Create the [`NetworkServerProvider::WriteParams`] that will be used by the write function.
+    fn init_write<'a> (settings: &'a Self::NetworkSettings) -> Self::WriteParams; 
+
+    /// Split the socket into a read and write half, so that the two actions
+    /// can be handled concurrently.
+    fn split(combined: Self::Socket) -> (Self::ReadHalf, Self::WriteHalf);
+}
+
 /// An instance of a [`NetworkServer`] is used to listen for new client connections
 /// using [`NetworkServer::listen`]
-pub struct NetworkServer {
+pub struct NetworkServer<NSP: NetworkServerProvider> {
     runtime: Runtime,
     recv_message_map: Arc<DashMap<&'static str, Vec<(ConnectionId, Box<dyn NetworkMessage>)>>>,
     established_connections: Arc<DashMap<ConnectionId, ClientConnection>>,
-    new_connections: SyncChannel<NewIncomingConnection>,
+    new_connections: SyncChannel<NewIncomingConnection<NSP>>,
     disconnected_connections: SyncChannel<ConnectionId>,
-    error_channel: SyncChannel<NetworkError>,
+    error_channel: SyncChannel<NetworkError<NSP::ProtocolErrors>>,
     server_handle: Option<JoinHandle<()>>,
+    provider: NSP,
 }
 
-impl std::fmt::Debug for NetworkServer {
+impl<NSP: NetworkServerProvider> std::fmt::Debug for NetworkServer<NSP> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -70,8 +134,8 @@ impl std::fmt::Debug for NetworkServer {
     }
 }
 
-impl NetworkServer {
-    pub(crate) fn new() -> NetworkServer {
+impl<NSP: NetworkServerProvider> NetworkServer<NSP> {
+    pub(crate) fn new(provider: NSP) -> Self {
         NetworkServer {
             runtime: tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -83,6 +147,7 @@ impl NetworkServer {
             disconnected_connections: SyncChannel::new(),
             error_channel: SyncChannel::new(),
             server_handle: None,
+            provider
         }
     }
 
@@ -92,18 +157,18 @@ impl NetworkServer {
     /// If you are already listening for new connections, then this will disconnect existing connections first
     pub fn listen(
         &mut self,
-        addr: impl ToSocketAddrs + Send + 'static,
-    ) -> Result<(), NetworkError> {
+        addr: NSP::ListenInfo,
+    ) -> Result<(), NetworkError<NSP::ProtocolErrors>> {
         self.stop();
 
         let new_connections = self.new_connections.sender.clone();
         let error_sender = self.error_channel.sender.clone();
 
         let listen_loop = async move {
-            let listener = match TcpListener::bind(addr).await {
+            let mut listener = match NSP::listen(addr).await {
                 Ok(listener) => listener,
                 Err(err) => {
-                    match error_sender.send(NetworkError::Listen(err)) {
+                    match error_sender.send(NetworkError::<NSP::ProtocolErrors>::Provider(err)) {
                         Ok(_) => (),
                         Err(err) => {
                             error!("Could not send listen error: {}", err);
@@ -116,10 +181,10 @@ impl NetworkServer {
 
             let new_connections = new_connections;
             loop {
-                let resp = match listener.accept().await {
+                let resp = match NSP::accept(&mut listener).await {
                     Ok((socket, addr)) => NewIncomingConnection { socket, addr },
                     Err(error) =>  {
-                        if let Err(err)  = error_sender.send(NetworkError::Accept(error)){
+                        if let Err(err)  = error_sender.send(NetworkError::Provider(error)){
                             error!("Cannot accept more errors, channel closed: {}", err);
                             break;
                         };
@@ -146,7 +211,7 @@ impl NetworkServer {
         &self,
         client_id: ConnectionId,
         message: T,
-    ) -> Result<(), NetworkError> {
+    ) -> Result<(), NetworkError<NSP::ProtocolErrors>> {
         let connection = match self.established_connections.get(&client_id) {
             Some(conn) => conn,
             None => return Err(NetworkError::ConnectionNotFound(client_id)),
@@ -203,7 +268,7 @@ impl NetworkServer {
     }
 
     /// Disconnect a specific client
-    pub fn disconnect(&self, conn_id: ConnectionId) -> Result<(), NetworkError> {
+    pub fn disconnect(&self, conn_id: ConnectionId) -> Result<(), NetworkError<NSP::ProtocolErrors>> {
         let connection = if let Some(conn) = self.established_connections.remove(&conn_id) {
             conn
         } else {
@@ -216,25 +281,22 @@ impl NetworkServer {
     }
 }
 
-pub(crate) fn handle_new_incoming_connections(
-    server: Res<NetworkServer>,
-    network_settings: Res<NetworkSettings>,
+pub(crate) fn handle_new_incoming_connections<NSP: NetworkServerProvider>(
+    server: Res<NetworkServer<NSP>>,
+    network_settings: Res<NSP::NetworkSettings>,
     mut network_events: EventWriter<ServerNetworkEvent>,
 ) {
     for new_conn in server.new_connections.receiver.try_iter() {
-            match new_conn.socket.set_nodelay(true) {
-                Ok(_) => (),
-                Err(e) => error!("Could not set nodelay for [{}]: {}", new_conn, e),
-            }
 
             let conn_id = ConnectionId {
                 uuid: Uuid::new_v4(),
-                addr: new_conn.addr,
+                //addr: new_conn.addr,
             };
 
-            let (read_socket, send_socket) = new_conn.socket.into_split();
+            let (mut read_half, mut write_half) = NSP::split(new_conn.socket);
             let recv_message_map = server.recv_message_map.clone();
-            let network_settings = network_settings.clone();
+            let read_network_settings = network_settings.clone();
+            let write_network_settings = network_settings.clone();
             let disconnected_connections = server.disconnected_connections.sender.clone();
 
             let (send_message, recv_message) = unbounded_channel();
@@ -245,46 +307,13 @@ pub(crate) fn handle_new_incoming_connections(
                     id: conn_id,
                     receive_task: server.runtime.spawn(async move {
                         let recv_message_map = recv_message_map;
-                        let network_settings = network_settings;
-
-                        let mut read_socket = read_socket;
-
-                        let mut buffer: Vec<u8> = (0..network_settings.max_packet_length).map(|_| 0).collect();
+                        let mut read_params = NSP::init_read(&read_network_settings);
 
                         trace!("Starting listen task for {}", conn_id);
                         loop {
                             trace!("Listening for length!");
 
-                            let length = match read_socket.read_u32().await {
-                                Ok(len) => len as usize,
-                                Err(err) => {
-                                    // If we get an EOF here, the connection was broken and we simply report a 'disconnected' signal
-                                    if err.kind() == std::io::ErrorKind::UnexpectedEof { break }
-
-                                    error!("Encountered error while reading length [{}]: {}", conn_id, err);
-                                    break;
-                                }
-                            };
-
-                            trace!("Received packet with length: {}", length);
-
-                            if length > network_settings.max_packet_length {
-                                error!("Received too large packet from [{}]: {} > {}", conn_id, length, network_settings.max_packet_length);
-                                break;
-                            }
-
-
-                            match read_socket.read_exact(&mut buffer[..length]).await {
-                                Ok(_) => (),
-                                Err(err) => {
-                                    error!("Encountered error while reading stream of length {} [{}]: {}", length, conn_id, err);
-                                    break;
-                                }
-                            }
-
-                            trace!("Read buffer of length {}", length);
-
-                            let packet: NetworkPacket = match bincode::deserialize(&buffer[..length]) {
+                            let packet = match NSP::read_message(&mut read_half, &read_network_settings, &mut read_params).await {
                                 Ok(packet) => packet,
                                 Err(err) => {
                                     error!("Failed to decode network packet from [{}]: {}", conn_id, err);
@@ -292,16 +321,12 @@ pub(crate) fn handle_new_incoming_connections(
                                 }
                             };
 
-                            trace!("Created a network packet");
-
                             match recv_message_map.get_mut(&packet.kind[..]) {
                                 Some(mut packets) => packets.push((conn_id, packet.data)),
                                 None => {
                                     error!("Could not find existing entries for message kinds: {:?}", packet);
                                 }
                             }
-
-                            debug!("Received new message of length: {}", length);
                         }
 
                         match disconnected_connections.send(conn_id) {
@@ -313,28 +338,13 @@ pub(crate) fn handle_new_incoming_connections(
                     }),
                     send_task: server.runtime.spawn(async move {
                         let mut recv_message = recv_message;
-                        let mut send_socket = send_socket;
+
+                        let mut write_half = write_half;
+
+                        let mut write_params = NSP::init_write(&write_network_settings);
 
                         while let Some(message) = recv_message.recv().await {
-                            let encoded = match bincode::serialize(&message) {
-                                Ok(encoded) => encoded,
-                                Err(err) =>  {
-                                    error!("Could not encode packet {:?}: {}", message, err);
-                                    continue;
-                                }
-                            };
-
-                            let len = encoded.len();
-
-                            match send_socket.write_u32(len as u32).await {
-                                Ok(_) => (),
-                                Err(err) => {
-                                    error!("Could not send packet length: {:?}: {}", len, err);
-                                    return;
-                                }
-                            }
-
-                            match send_socket.write_all(&encoded).await {
+                            match NSP::send_message(&message, &mut write_half, &write_network_settings, &mut write_params).await {
                                 Ok(_) => (),
                                 Err(err) => {
                                     error!("Could not send packet: {:?}: {}", message, err);
@@ -344,7 +354,7 @@ pub(crate) fn handle_new_incoming_connections(
                         }
                     }),
                     send_message,
-                    addr: new_conn.addr,
+                    //addr: new_conn.addr,
                 },
             );
 
@@ -371,12 +381,12 @@ pub trait AppNetworkServerMessage {
     /// - Add a new event type of [`NetworkData<T>`]
     /// - Register the type for transformation over the wire
     /// - Internal bookkeeping
-    fn listen_for_server_message<T: ServerMessage>(&mut self) -> &mut Self;
+    fn listen_for_server_message<T: ServerMessage, NSP: NetworkServerProvider>(&mut self) -> &mut Self;
 }
 
 impl AppNetworkServerMessage for App {
-    fn listen_for_server_message<T: ServerMessage>(&mut self) -> &mut Self {
-        let server = self.world.get_resource::<NetworkServer>().expect("Could not find `NetworkServer`. Be sure to include the `ServerPlugin` before listening for server messages.");
+    fn listen_for_server_message<T: ServerMessage, NSP: NetworkServerProvider>(&mut self) -> &mut Self {
+        let server = self.world.get_resource::<NetworkServer<NSP>>().expect("Could not find `NetworkServer`. Be sure to include the `ServerPlugin` before listening for server messages.");
 
         debug!("Registered a new ServerMessage: {}", T::NAME);
 
@@ -387,12 +397,12 @@ impl AppNetworkServerMessage for App {
         );
         server.recv_message_map.insert(T::NAME, Vec::new());
         self.add_event::<NetworkData<T>>();
-        self.add_system_to_stage(CoreStage::PreUpdate, register_server_message::<T>.system())
+        self.add_system_to_stage(CoreStage::PreUpdate, register_server_message::<T, NSP>)
     }
 }
 
-fn register_server_message<T>(
-    net_res: ResMut<NetworkServer>,
+fn register_server_message<T, NSP: NetworkServerProvider>(
+    net_res: ResMut<NetworkServer<NSP>>,
     mut events: EventWriter<NetworkData<T>>,
 ) where
     T: ServerMessage,

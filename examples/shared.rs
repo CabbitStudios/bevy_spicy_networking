@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use bevy_spicy_networking::{ClientMessage, NetworkMessage, ServerMessage};
+use bevy_spicy_networking_tokio_tcp::TokioTcpStreamServerProvider;
 
 /////////////////////////////////////////////////////////////////////
 // In this example the client sends `UserChatMessage`s to the server,
@@ -55,5 +56,5 @@ pub fn server_register_network_messages(app: &mut App) {
 
     // The server registers messages that arrives from a client, so that
     // it is prepared to handle them. Otherwise, an error occurs.
-    app.listen_for_server_message::<UserChatMessage>();
+    app.listen_for_server_message::<UserChatMessage, TokioTcpStreamServerProvider>();
 }

@@ -1,3 +1,4 @@
 # Rust build files
 /target
 
+*/target

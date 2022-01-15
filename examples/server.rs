@@ -4,6 +4,8 @@ use bevy_spicy_networking::{ConnectionId, NetworkData, NetworkServer, ServerNetw
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use bevy_spicy_networking_tokio_tcp::{TokioTcpStreamServerProvider, NetworkSettings};
+
 mod shared;
 
 fn main() {
@@ -16,22 +18,23 @@ fn main() {
 
     // Before we can register the potential message types, we
     // need to add the plugin
-    app.add_plugin(bevy_spicy_networking::ServerPlugin);
+    app.add_plugin(bevy_spicy_networking::ServerPlugin::<TokioTcpStreamServerProvider>::default());
 
     // A good way to ensure that you are not forgetting to register
     // any messages is to register them where they are defined!
     shared::server_register_network_messages(&mut app);
 
-    app.add_startup_system(setup_networking.system());
-    app.add_system(handle_connection_events.system());
-    app.add_system(handle_messages.system());
+    app.add_startup_system(setup_networking);
+    app.add_system(handle_connection_events);
+    app.add_system(handle_messages);
+    app.init_resource::<NetworkSettings>();
 
     app.run();
 }
 
 // On the server side, you need to setup networking. You do not need to do so at startup, and can start listening
 // at any time.
-fn setup_networking(mut net: ResMut<NetworkServer>) {
+fn setup_networking(mut net: ResMut<NetworkServer<TokioTcpStreamServerProvider>>) {
     let ip_address = "127.0.0.1".parse().expect("Could not parse ip address");
 
     info!("Address of the server: {}", ip_address);
@@ -54,7 +57,7 @@ struct Player(ConnectionId);
 
 fn handle_connection_events(
     mut commands: Commands,
-    net: Res<NetworkServer>,
+    net: Res<NetworkServer<TokioTcpStreamServerProvider>>,
     mut network_events: EventReader<ServerNetworkEvent>,
 ) {
     for event in network_events.iter() {
@@ -74,7 +77,7 @@ fn handle_connection_events(
 // Receiving a new message is as simple as listening for events of `NetworkData<T>`
 fn handle_messages(
     mut new_messages: EventReader<NetworkData<shared::UserChatMessage>>,
-    net: Res<NetworkServer>,
+    net: Res<NetworkServer<TokioTcpStreamServerProvider>>,
 ) {
     for message in new_messages.iter() {
         let user = message.source();

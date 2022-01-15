@@ -134,7 +134,7 @@ impl NetworkClient {
 
     /// Send a message to the connected server, returns `Err(NetworkError::NotConnected)` if
     /// the connection hasn't been established yet
-    pub fn send_message<T: ServerMessage>(&self, message: T) -> Result<(), NetworkError> {
+    pub fn send_message<T: ServerMessage>(&self, message: T) -> Result<(), NetworkError<()>> {
         debug!("Sending message to server");
         let server_connection = match self.server_connection.as_ref() {
             Some(server) => server,
@@ -225,6 +225,7 @@ fn register_client_message<T>(
     );
 }
 
+/// Pushes messages into the network event queue.
 pub fn handle_connection_event(
     mut net_res: ResMut<NetworkClient>,
     mut events: EventWriter<ClientNetworkEvent>,
@@ -354,6 +355,7 @@ pub fn handle_connection_event(
     events.send(ClientNetworkEvent::Connected);
 }
 
+/// Takes events and forwards them to the server.
 pub fn send_client_network_events(
     client_server: ResMut<NetworkClient>,
     mut client_network_events: EventWriter<ClientNetworkEvent>,

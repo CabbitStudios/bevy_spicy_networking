@@ -35,6 +35,13 @@ serde = { version = "1.0.125", features = ["derive"] }
 thiserror = "1.0.24"
 tokio = { version = "1.4.0", features = ["net", "io-util", "sync", "rt-multi-thread"] }
 typetag = "0.1.7"
+async-trait = "0.1.52"
 
 [dev-dependencies]
 bevy = { version = "0.6" }
+bevy_spicy_networking_tokio_tcp = {path = "./bevy_spicy_networking_tokio_tcp"}
+
+[workspace]
+members = [
+    "bevy_spicy_networking_tokio_tcp"
+]

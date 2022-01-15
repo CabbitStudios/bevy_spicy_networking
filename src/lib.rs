@@ -142,12 +142,15 @@ Currently this library uses TCP under the hood. Meaning that it has all its draw
 games where less-stringent latency delays might be acceptable.
 */
 
-mod client;
+/// Contains all functionality for contenctin to a server, sending, and recieving messages with it.
+pub mod client;
 mod error;
 mod network_message;
-mod server;
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+/// Contains all functionality for starting a server, sending, and recieving messages from clients.
+pub mod server;
+
+use std::{net::{IpAddr, Ipv4Addr, SocketAddr}, marker::PhantomData};
 
 use bevy::{prelude::*, utils::Uuid};
 pub use client::{AppNetworkClientMessage, NetworkClient};
@@ -156,7 +159,8 @@ use derive_more::{Deref, Display};
 use error::NetworkError;
 pub use network_message::{ClientMessage, NetworkMessage, ServerMessage};
 use serde::{Deserialize, Serialize};
-pub use server::{AppNetworkServerMessage, NetworkServer};
+pub use server::{AppNetworkServerMessage, NetworkServer, NetworkServerProvider};
+pub use async_trait::async_trait;
 
 struct SyncChannel<T> {
     pub(crate) sender: Sender<T>,
@@ -172,7 +176,7 @@ impl<T> SyncChannel<T> {
 }
 
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Display, Debug)]
-#[display(fmt = "Connection from {} with ID={}", addr, uuid)]
+#[display(fmt = "Connection with ID={}", /*addr,*/ uuid)]
 /// A [`ConnectionId`] denotes a single connection
 ///
 /// Use [`ConnectionId::is_server`] whether it is a connection to a server
@@ -180,21 +184,23 @@ impl<T> SyncChannel<T> {
 /// is no ambiguity.
 pub struct ConnectionId {
     uuid: Uuid,
-    addr: SocketAddr,
+    //addr: SocketAddr,
 }
 
 impl ConnectionId {
     /// Get the address associated to this connection id
     ///
     /// This contains the IP/Port information
+    /*
     pub fn address(&self) -> SocketAddr {
         self.addr
     }
+    */
 
     pub(crate) fn server(addr: Option<SocketAddr>) -> ConnectionId {
         ConnectionId {
             uuid: Uuid::nil(),
-            addr: addr.unwrap_or_else(|| SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0)),
+            //addr: addr.unwrap_or_else(|| SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0)),
         }
     }
 
@@ -206,7 +212,7 @@ impl ConnectionId {
 
 #[derive(Serialize, Deserialize)]
 /// [`NetworkPacket`]s are untyped packets to be sent over the wire
-struct NetworkPacket {
+pub struct NetworkPacket {
     kind: String,
     data: Box<dyn NetworkMessage>,
 }
@@ -227,7 +233,7 @@ pub enum ServerNetworkEvent {
     /// A client has disconnected
     Disconnected(ConnectionId),
     /// An error occured while trying to do a network operation
-    Error(NetworkError),
+    Error(NetworkError<()>),
 }
 
 #[derive(Debug)]
@@ -238,7 +244,7 @@ pub enum ClientNetworkEvent {
     /// Disconnected from a server
     Disconnected,
     /// An error occured while trying to do a network operation
-    Error(NetworkError),
+    Error(NetworkError<()>),
 }
 
 #[derive(Debug, Deref)]
@@ -289,16 +295,15 @@ impl Default for NetworkSettings {
 #[derive(Default, Copy, Clone, Debug)]
 /// The plugin to add to your bevy [`App`](bevy::prelude::App) when you want
 /// to instantiate a server
-pub struct ServerPlugin;
+pub struct ServerPlugin<NSP: NetworkServerProvider + Default>(PhantomData<NSP>);
 
-impl Plugin for ServerPlugin {
+impl<NSP: NetworkServerProvider + Default> Plugin for ServerPlugin<NSP> {
     fn build(&self, app: &mut App) {
-        app.insert_resource(server::NetworkServer::new());
+        app.insert_resource(server::NetworkServer::new(NSP::default()));
         app.add_event::<ServerNetworkEvent>();
-        app.init_resource::<NetworkSettings>();
         app.add_system_to_stage(
             CoreStage::PreUpdate,
-            server::handle_new_incoming_connections.system(),
+            server::handle_new_incoming_connections::<NSP>,
         );
     }
 }

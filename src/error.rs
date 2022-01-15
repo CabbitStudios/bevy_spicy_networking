@@ -1,7 +1,7 @@
 use crate::ConnectionId;
 
 #[derive(thiserror::Error, Debug)]
-pub enum NetworkError {
+pub enum NetworkError<PE: std::fmt::Debug> {
     #[error("An error occured when accepting a new connnection: {0}")]
     Accept(std::io::Error),
     #[error("Could not find connection with id: {0}")]
@@ -14,4 +14,6 @@ pub enum NetworkError {
     Listen(std::io::Error),
     #[error("An error occured when trying to connect: {0}")]
     Connection(std::io::Error),
+    #[error("An error coming from the underlying provider")]
+    Provider(PE)
 }
