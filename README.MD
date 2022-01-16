@@ -78,12 +78,11 @@ impl ServerMessage for WhisperMessage {
 ```rust
 use bevy_spicy_networking::AppNetworkServerMessage;
 
-let appbuilder: &mut AppBuilder = /* Get an AppBuilder, which is returned by bevy from App::build() */;
-
+let app: &mut App = App::new();
 
 // Now whenever a client sends a `WhisperMessage` the server will generate an event of
 // `NetworkData<WhisperMessage>` which your application can then handle
-appbuilder.listen_for_server_message::<WhisperMessage>();
+app.listen_for_server_message::<WhisperMessage>();
 ```
 
 4. Listen for events of that type
