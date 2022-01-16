@@ -272,25 +272,6 @@ impl<T> NetworkData<T> {
     }
 }
 
-#[derive(Clone, Debug)]
-#[allow(missing_copy_implementations)]
-/// Settings to configure the network, both client and server
-pub struct NetworkSettings {
-    /// Maximum packet size in bytes. If a client ever exceeds this size, they will be disconnected
-    ///
-    /// ## Default
-    /// The default is set to 10MiB
-    pub max_packet_length: usize,
-}
-
-impl Default for NetworkSettings {
-    fn default() -> Self {
-        NetworkSettings {
-            max_packet_length: 10 * 1024 * 1024,
-        }
-    }
-}
-
 #[derive(Default, Copy, Clone, Debug)]
 /// The plugin to add to your bevy [`App`](bevy::prelude::App) when you want
 /// to instantiate a server

@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use crate::{
     error::NetworkError,
     network_message::{ClientMessage, NetworkMessage, ServerMessage},
-    ClientNetworkEvent, ConnectionId, NetworkData, NetworkPacket, NetworkSettings, SyncChannel,
+    ClientNetworkEvent, ConnectionId, NetworkData, NetworkPacket, SyncChannel,
 };
 
 /// A trait used by [`NetworkClient`] to drive a client, this is responsible

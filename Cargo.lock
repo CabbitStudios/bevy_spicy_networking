@@ -594,7 +594,7 @@ dependencies = [
 
 [[package]]
 name = "bevy_spicy_networking"
-version = "0.5.1"
+version = "0.6.1"
 dependencies = [
  "async-trait",
  "bevy",

@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use crate::{
     error::NetworkError,
     network_message::{ClientMessage, NetworkMessage, ServerMessage},
-    ConnectionId, NetworkData, NetworkPacket, NetworkSettings, ServerNetworkEvent, SyncChannel,
+    ConnectionId, NetworkData, NetworkPacket, ServerNetworkEvent, SyncChannel,
 };
 
 #[derive(Display)]
