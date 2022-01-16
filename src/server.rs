@@ -19,10 +19,9 @@ use crate::{
 };
 
 #[derive(Display)]
-#[display(fmt = "Incoming Connection from {}", addr)]
+#[display(fmt = "Incoming Connection")]
 struct NewIncomingConnection<NSP: NetworkServerProvider> {
     socket: NSP::Socket,
-    addr: NSP::ClientInfo,
 }
 
 /// The servers view of a client.
@@ -62,9 +61,6 @@ pub trait NetworkServerProvider: 'static + Send + Sync{
     /// This is the type given to the listener to start listening.
     type ListenInfo: Send;
 
-    /// This is extra info returned when a client connects.
-    type ClientInfo: Send;
-
     /// The type that accepts new connections to the server.
     type Listener: Send;
 
@@ -85,14 +81,14 @@ pub trait NetworkServerProvider: 'static + Send + Sync{
     type WriteParams: Send;
 
     /// The error type associated with this provider.
-    type ProtocolErrors: Send + std::fmt::Debug + std::fmt::Display;
+    type ProtocolErrors: Sync + Send + std::fmt::Debug + std::fmt::Display;
 
     /// Creates a new listener, this listener will be passed to 
     /// [`NetworkServerProvider::listener`] to get new connections.
     async fn listen(listen_info: Self::ListenInfo) -> Result<Self::Listener, Self::ProtocolErrors>;
 
     /// Recieve a connection.
-    async fn accept<'l>(listener: &'l mut Self::Listener) -> Result<(Self::Socket, Self::ClientInfo), Self::ProtocolErrors>;
+    async fn accept<'l>(listener: &'l mut Self::Listener) -> Result<Self::Socket, Self::ProtocolErrors>;
 
     /// Recieve a message from the client.
     async fn read_message<'a>(read_half: &'a mut Self::ReadHalf, settings: &'a Self::NetworkSettings, read_params: &'a mut Self::ReadParams) -> Result<NetworkPacket, Self::ProtocolErrors>;
@@ -136,7 +132,7 @@ impl<NSP: NetworkServerProvider> std::fmt::Debug for NetworkServer<NSP> {
 
 impl<NSP: NetworkServerProvider> NetworkServer<NSP> {
     pub(crate) fn new(provider: NSP) -> Self {
-        NetworkServer {
+        Self {
             runtime: tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
@@ -157,15 +153,16 @@ impl<NSP: NetworkServerProvider> NetworkServer<NSP> {
     /// If you are already listening for new connections, then this will disconnect existing connections first
     pub fn listen(
         &mut self,
-        addr: NSP::ListenInfo,
+        listen_info: impl Into<NSP::ListenInfo>,
     ) -> Result<(), NetworkError<NSP::ProtocolErrors>> {
         self.stop();
 
         let new_connections = self.new_connections.sender.clone();
         let error_sender = self.error_channel.sender.clone();
+        let listen_info = listen_info.into();
 
         let listen_loop = async move {
-            let mut listener = match NSP::listen(addr).await {
+            let mut listener = match NSP::listen(listen_info).await {
                 Ok(listener) => listener,
                 Err(err) => {
                     match error_sender.send(NetworkError::<NSP::ProtocolErrors>::Provider(err)) {
@@ -182,7 +179,7 @@ impl<NSP: NetworkServerProvider> NetworkServer<NSP> {
             let new_connections = new_connections;
             loop {
                 let resp = match NSP::accept(&mut listener).await {
-                    Ok((socket, addr)) => NewIncomingConnection { socket, addr },
+                    Ok(socket) => NewIncomingConnection { socket },
                     Err(error) =>  {
                         if let Err(err)  = error_sender.send(NetworkError::Provider(error)){
                             error!("Cannot accept more errors, channel closed: {}", err);
@@ -284,7 +281,7 @@ impl<NSP: NetworkServerProvider> NetworkServer<NSP> {
 pub(crate) fn handle_new_incoming_connections<NSP: NetworkServerProvider>(
     server: Res<NetworkServer<NSP>>,
     network_settings: Res<NSP::NetworkSettings>,
-    mut network_events: EventWriter<ServerNetworkEvent>,
+    mut network_events: EventWriter<ServerNetworkEvent<NSP>>,
 ) {
     for new_conn in server.new_connections.receiver.try_iter() {
 
@@ -311,7 +308,6 @@ pub(crate) fn handle_new_incoming_connections<NSP: NetworkServerProvider>(
 
                         trace!("Starting listen task for {}", conn_id);
                         loop {
-                            trace!("Listening for length!");
 
                             let packet = match NSP::read_message(&mut read_half, &read_network_settings, &mut read_params).await {
                                 Ok(packet) => packet,

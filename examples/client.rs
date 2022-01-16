@@ -1,8 +1,11 @@
 #![allow(clippy::type_complexity)]
 
 use bevy::prelude::*;
-use bevy_spicy_networking::{ClientNetworkEvent, NetworkClient, NetworkData, NetworkSettings};
+use bevy_spicy_networking::{ClientNetworkEvent, NetworkClient, NetworkData};
 use std::net::SocketAddr;
+
+use bevy_spicy_networking_tokio_tcp::{TokioTcpStreamClientProvider, NetworkSettings};
+
 mod shared;
 
 fn main() {
@@ -12,7 +15,7 @@ fn main() {
 
     // You need to add the `ClientPlugin` first before you can register
     // `ClientMessage`s
-    app.add_plugin(bevy_spicy_networking::ClientPlugin);
+    app.add_plugin(bevy_spicy_networking::ClientPlugin::<TokioTcpStreamClientProvider>::default());
 
     // A good way to ensure that you are not forgetting to register
     // any messages is to register them where they are defined!
@@ -24,6 +27,7 @@ fn main() {
     app.add_system(handle_message_button.system());
     app.add_system(handle_incoming_messages.system());
     app.add_system(handle_network_events.system());
+    app.init_resource::<NetworkSettings>();
 
     app.init_resource::<GlobalChatSettings>();
 
@@ -48,7 +52,7 @@ fn handle_incoming_messages(
 }
 
 fn handle_network_events(
-    mut new_network_events: EventReader<ClientNetworkEvent>,
+    mut new_network_events: EventReader<ClientNetworkEvent<TokioTcpStreamClientProvider>>,
     connect_query: Query<&Children, With<ConnectButton>>,
     mut text_query: Query<&mut Text>,
     mut messages: Query<&mut GameChatMessages>,
@@ -58,7 +62,7 @@ fn handle_network_events(
     let mut messages = messages.get_single_mut().unwrap();
 
     for event in new_network_events.iter() {
-        info!("Received event: {:?}", event);
+        info!("Received event");
         match event {
             ClientNetworkEvent::Connected => {
                 messages.add(SystemMessage::new(
@@ -189,7 +193,7 @@ type GameChatMessages = ChatMessages<ChatMessage>;
 struct ConnectButton;
 
 fn handle_connect_button(
-    mut net: ResMut<NetworkClient>,
+    mut net: ResMut<NetworkClient<TokioTcpStreamClientProvider>>,
     interaction_query: Query<
         (&Interaction, &Children),
         (Changed<Interaction>, With<ConnectButton>),
@@ -219,10 +223,7 @@ fn handle_connect_button(
                 let socket_address = SocketAddr::new(ip_address, 9999);
 
                 net.connect(
-                    socket_address,
-                    NetworkSettings {
-                        max_packet_length: 10 * 1024 * 1024,
-                    },
+                    socket_address
                 );
             }
         }
@@ -233,7 +234,7 @@ fn handle_connect_button(
 struct MessageButton;
 
 fn handle_message_button(
-    net: Res<NetworkClient>,
+    net: Res<NetworkClient<TokioTcpStreamClientProvider>>,
     interaction_query: Query<&Interaction, (Changed<Interaction>, With<MessageButton>)>,
     mut messages: Query<&mut GameChatMessages>,
 ) {

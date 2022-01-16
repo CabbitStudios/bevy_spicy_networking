@@ -58,7 +58,7 @@ struct Player(ConnectionId);
 fn handle_connection_events(
     mut commands: Commands,
     net: Res<NetworkServer<TokioTcpStreamServerProvider>>,
-    mut network_events: EventReader<ServerNetworkEvent>,
+    mut network_events: EventReader<ServerNetworkEvent<TokioTcpStreamServerProvider>>,
 ) {
     for event in network_events.iter() {
         if let ServerNetworkEvent::Connected(conn_id) = event {

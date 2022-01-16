@@ -153,7 +153,7 @@ pub mod server;
 use std::{net::{IpAddr, Ipv4Addr, SocketAddr}, marker::PhantomData};
 
 use bevy::{prelude::*, utils::Uuid};
-pub use client::{AppNetworkClientMessage, NetworkClient};
+pub use client::{AppNetworkClientMessage, NetworkClient, NetworkClientProvider};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use derive_more::{Deref, Display};
 use error::NetworkError;
@@ -197,10 +197,9 @@ impl ConnectionId {
     }
     */
 
-    pub(crate) fn server(addr: Option<SocketAddr>) -> ConnectionId {
-        ConnectionId {
+    pub(crate) fn server() -> Self {
+        Self {
             uuid: Uuid::nil(),
-            //addr: addr.unwrap_or_else(|| SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0)),
         }
     }
 
@@ -227,24 +226,24 @@ impl std::fmt::Debug for NetworkPacket {
 
 /// A network event originating from a [`NetworkServer`]
 #[derive(Debug)]
-pub enum ServerNetworkEvent {
+pub enum ServerNetworkEvent<NSP: NetworkServerProvider> {
     /// A new client has connected
     Connected(ConnectionId),
     /// A client has disconnected
     Disconnected(ConnectionId),
     /// An error occured while trying to do a network operation
-    Error(NetworkError<()>),
+    Error(NetworkError<NSP::ProtocolErrors>),
 }
 
 #[derive(Debug)]
 /// A network event originating from a [`NetworkClient`]
-pub enum ClientNetworkEvent {
+pub enum ClientNetworkEvent<NCP: NetworkClientProvider> {
     /// Connected to a server
     Connected,
     /// Disconnected from a server
     Disconnected,
     /// An error occured while trying to do a network operation
-    Error(NetworkError<()>),
+    Error(NetworkError<NCP::ProtocolErrors>),
 }
 
 #[derive(Debug, Deref)]
@@ -295,12 +294,12 @@ impl Default for NetworkSettings {
 #[derive(Default, Copy, Clone, Debug)]
 /// The plugin to add to your bevy [`App`](bevy::prelude::App) when you want
 /// to instantiate a server
-pub struct ServerPlugin<NSP: NetworkServerProvider + Default>(PhantomData<NSP>);
+pub struct ServerPlugin<NSP: NetworkServerProvider>(NSP);
 
 impl<NSP: NetworkServerProvider + Default> Plugin for ServerPlugin<NSP> {
     fn build(&self, app: &mut App) {
         app.insert_resource(server::NetworkServer::new(NSP::default()));
-        app.add_event::<ServerNetworkEvent>();
+        app.add_event::<ServerNetworkEvent<NSP>>();
         app.add_system_to_stage(
             CoreStage::PreUpdate,
             server::handle_new_incoming_connections::<NSP>,
@@ -311,20 +310,19 @@ impl<NSP: NetworkServerProvider + Default> Plugin for ServerPlugin<NSP> {
 #[derive(Default, Copy, Clone, Debug)]
 /// The plugin to add to your bevy [`App`](bevy::prelude::App) when you want
 /// to instantiate a client
-pub struct ClientPlugin;
+pub struct ClientPlugin<NCP: NetworkClientProvider>(NCP);
 
-impl Plugin for ClientPlugin {
+impl<NCP: NetworkClientProvider + Default> Plugin for ClientPlugin<NCP> {
     fn build(&self, app: &mut App) {
-        app.insert_resource(client::NetworkClient::new());
-        app.add_event::<ClientNetworkEvent>();
-        app.init_resource::<NetworkSettings>();
+        app.insert_resource(client::NetworkClient::new(NCP::default()));
+        app.add_event::<ClientNetworkEvent<NCP>>();
         app.add_system_to_stage(
             CoreStage::PreUpdate,
-            client::send_client_network_events.system(),
+            client::send_client_network_events::<NCP>,
         );
         app.add_system_to_stage(
             CoreStage::PreUpdate,
-            client::handle_connection_event.system(),
+            client::handle_connection_event::<NCP>,
         );
     }
 }
