@@ -34,14 +34,14 @@ fn main() {
 
 // On the server side, you need to setup networking. You do not need to do so at startup, and can start listening
 // at any time.
-fn setup_networking(mut net: ResMut<NetworkServer<TokioTcpStreamServerProvider>>) {
+fn setup_networking(mut net: ResMut<NetworkServer<TokioTcpStreamServerProvider>>, settings: Res<NetworkSettings>) {
     let ip_address = "127.0.0.1".parse().expect("Could not parse ip address");
 
     info!("Address of the server: {}", ip_address);
 
     let socket_address = SocketAddr::new(ip_address, 9999);
 
-    match net.listen(socket_address) {
+    match net.listen(socket_address, &settings) {
         Ok(_) => (),
         Err(err) => {
             error!("Could not start listening: {}", err);

@@ -74,18 +74,24 @@ pub trait NetworkServerProvider: 'static + Send + Sync{
     /// The write half of the given socket type.
     type WriteHalf: Send;
 
-    /// The parameters used by the read function that need to be created.
+    /// The parameters used by the read function that need to be created at runtime.
     type ReadParams: Send;
 
-    /// The parameters used by the write function that need to be created.
+    /// The parameters used by the write function that need to be created at runtime.
     type WriteParams: Send;
+
+    /// The parameters used by the listen function that need to be created at runtime.
+    type ListenParams: Send;
 
     /// The error type associated with this provider.
     type ProtocolErrors: Sync + Send + std::fmt::Debug + std::fmt::Display;
 
+    /// Create the [`NetworkServerProvider::WriteParams`] that will be used by the write function.
+    fn init_listen<'a> (settings: &'a Self::NetworkSettings, runtime: &'a Runtime) -> Self::ListenParams; 
+
     /// Creates a new listener, this listener will be passed to 
     /// [`NetworkServerProvider::listener`] to get new connections.
-    async fn listen(listen_info: Self::ListenInfo) -> Result<Self::Listener, Self::ProtocolErrors>;
+    async fn listen(listen_info: Self::ListenInfo, listen_params: Self::ListenParams) -> Result<Self::Listener, Self::ProtocolErrors>;
 
     /// Recieve a connection.
     async fn accept<'l>(listener: &'l mut Self::Listener) -> Result<Self::Socket, Self::ProtocolErrors>;
@@ -97,10 +103,10 @@ pub trait NetworkServerProvider: 'static + Send + Sync{
     async fn send_message<'a>(message: &'a NetworkPacket, write_half: &'a mut Self::WriteHalf, settings: &'a Self::NetworkSettings, write_params: &'a mut Self::WriteParams) -> Result<(), Self::ProtocolErrors>;
 
     /// Create the [`NetworkServerProvider::ReadParams`] that will be used by the read function.
-    fn init_read<'a> (settings: &'a Self::NetworkSettings) -> Self::ReadParams; 
+    fn init_read<'a> (settings: &'a Self::NetworkSettings, runtime: &'a Runtime) -> Self::ReadParams; 
 
     /// Create the [`NetworkServerProvider::WriteParams`] that will be used by the write function.
-    fn init_write<'a> (settings: &'a Self::NetworkSettings) -> Self::WriteParams; 
+    fn init_write<'a> (settings: &'a Self::NetworkSettings, runtime: &'a Runtime) -> Self::WriteParams; 
 
     /// Split the socket into a read and write half, so that the two actions
     /// can be handled concurrently.
@@ -154,15 +160,18 @@ impl<NSP: NetworkServerProvider> NetworkServer<NSP> {
     pub fn listen(
         &mut self,
         listen_info: impl Into<NSP::ListenInfo>,
+        network_settings: &NSP::NetworkSettings,
     ) -> Result<(), NetworkError<NSP::ProtocolErrors>> {
         self.stop();
 
         let new_connections = self.new_connections.sender.clone();
         let error_sender = self.error_channel.sender.clone();
         let listen_info = listen_info.into();
+        let listen_params = NSP::init_listen(network_settings, &self.runtime);
 
+        
         let listen_loop = async move {
-            let mut listener = match NSP::listen(listen_info).await {
+            let mut listener = match NSP::listen(listen_info, listen_params).await {
                 Ok(listener) => listener,
                 Err(err) => {
                     match error_sender.send(NetworkError::<NSP::ProtocolErrors>::Provider(err)) {
@@ -297,6 +306,8 @@ pub(crate) fn handle_new_incoming_connections<NSP: NetworkServerProvider>(
             let disconnected_connections = server.disconnected_connections.sender.clone();
 
             let (send_message, recv_message) = unbounded_channel();
+            let mut read_params = NSP::init_read(&read_network_settings, &server.runtime);
+            let mut write_params = NSP::init_write(&write_network_settings, &server.runtime);
 
             server.established_connections.insert(
                 conn_id,
@@ -304,7 +315,6 @@ pub(crate) fn handle_new_incoming_connections<NSP: NetworkServerProvider>(
                     id: conn_id,
                     receive_task: server.runtime.spawn(async move {
                         let recv_message_map = recv_message_map;
-                        let mut read_params = NSP::init_read(&read_network_settings);
 
                         trace!("Starting listen task for {}", conn_id);
                         loop {
@@ -337,7 +347,6 @@ pub(crate) fn handle_new_incoming_connections<NSP: NetworkServerProvider>(
 
                         let mut write_half = write_half;
 
-                        let mut write_params = NSP::init_write(&write_network_settings);
 
                         while let Some(message) = recv_message.recv().await {
                             match NSP::send_message(&message, &mut write_half, &write_network_settings, &mut write_params).await {

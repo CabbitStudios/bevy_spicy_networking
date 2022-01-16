@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 
 use bevy::prelude::{error, trace, debug};
 use bevy_spicy_networking::{async_trait, server::NetworkServerProvider, client::NetworkClientProvider, NetworkPacket};
-use tokio::{net::{TcpListener, TcpStream, tcp::{OwnedReadHalf, OwnedWriteHalf}}, io::{AsyncReadExt, AsyncWriteExt}};
+use tokio::{net::{TcpListener, TcpStream, tcp::{OwnedReadHalf, OwnedWriteHalf}}, io::{AsyncReadExt, AsyncWriteExt}, runtime::Runtime};
 
 #[derive(Default)]
 pub struct TokioTcpStreamServerProvider;
@@ -29,9 +29,15 @@ impl NetworkServerProvider for TokioTcpStreamServerProvider{
 
     type WriteParams = ();
 
+    type ListenParams = ();
+
     type ProtocolErrors = TokioTCPProviderErrors;
 
-    async fn listen(listen_info: Self::ListenInfo) -> Result<Self::Listener, Self::ProtocolErrors>{
+    fn init_listen<'a> (settings: &'a Self::NetworkSettings, runtime: &'a Runtime) -> Self::ListenParams{
+        
+    }
+
+    async fn listen(listen_info: Self::ListenInfo, listen_params: Self::ListenParams) -> Result<Self::Listener, Self::ProtocolErrors>{
         TcpListener::bind(listen_info).await.map_err(|e| TokioTCPProviderErrors::ConnectError)
     }
 
@@ -48,7 +54,7 @@ impl NetworkServerProvider for TokioTcpStreamServerProvider{
         }
     }
 
-    fn init_read<'a>(settings: &'a Self::NetworkSettings) -> Self::ReadParams{
+    fn init_read<'a>(settings: &'a Self::NetworkSettings, runtime: &'a Runtime) -> Self::ReadParams{
         (0..settings.max_packet_length).map(|_| 0).collect()
     }
 
@@ -92,7 +98,7 @@ impl NetworkServerProvider for TokioTcpStreamServerProvider{
         res
     }
 
-    fn init_write<'a>(settings: &'a Self::NetworkSettings) -> Self::WriteParams{
+    fn init_write<'a>(settings: &'a Self::NetworkSettings, runtime: &'a Runtime) -> Self::WriteParams{
         ()
     }
 
