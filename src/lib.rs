@@ -287,7 +287,7 @@ impl Default for NetworkSettings {
 }
 
 #[derive(Default, Copy, Clone, Debug)]
-/// The plugin to add to your bevy [`AppBuilder`](bevy::prelude::AppBuilder) when you want
+/// The plugin to add to your bevy [`App`](bevy::prelude::App) when you want
 /// to instantiate a server
 pub struct ServerPlugin;
 
@@ -304,7 +304,7 @@ impl Plugin for ServerPlugin {
 }
 
 #[derive(Default, Copy, Clone, Debug)]
-/// The plugin to add to your bevy [`AppBuilder`](bevy::prelude::AppBuilder) when you want
+/// The plugin to add to your bevy [`App`](bevy::prelude::App) when you want
 /// to instantiate a client
 pub struct ClientPlugin;
 

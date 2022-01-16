@@ -166,7 +166,7 @@ impl NetworkClient {
     }
 }
 
-/// A utility trait on [`AppBuilder`] to easily register [`ClientMessage`]s
+/// A utility trait on [`App`] to easily register [`ClientMessage`]s
 pub trait AppNetworkClientMessage {
     /// Register a client message type
     ///
