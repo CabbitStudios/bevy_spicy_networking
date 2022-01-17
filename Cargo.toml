@@ -31,7 +31,7 @@ crossbeam-channel = "0.5.0"
 dashmap = "4.0.2"
 derive_more = "0.99.13"
 downcast-rs = "1.2.0"
-serde = { version = "1.0.125", features = ["derive"] }
+serde = { version = "1.0.133", features = ["derive"] }
 thiserror = "1.0.24"
 tokio = { version = "1.15.0", features = ["net", "io-util", "sync", "rt-multi-thread"] }
 typetag = "0.1.7"
