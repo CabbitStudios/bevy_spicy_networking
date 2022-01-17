@@ -7,7 +7,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream, ToSocketAddrs},
     runtime::Runtime,
-    sync::mpsc::{unbounded_channel, UnboundedSender},
+    sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver},
     task::JoinHandle,
 };
 use async_trait::async_trait;
@@ -15,19 +15,14 @@ use async_trait::async_trait;
 use crate::{
     error::NetworkError,
     network_message::{ClientMessage, NetworkMessage, ServerMessage},
-    ConnectionId, NetworkData, NetworkPacket, ServerNetworkEvent, SyncChannel,
+    ConnectionId, NetworkData, NetworkPacket, ServerNetworkEvent, SyncChannel, AsyncChannel,
 };
-
-#[derive(Display)]
-#[display(fmt = "Incoming Connection")]
-struct NewIncomingConnection<NSP: NetworkServerProvider> {
-    socket: NSP::Socket,
-}
 
 /// The servers view of a client.
 pub struct ClientConnection {
     id: ConnectionId,
     receive_task: JoinHandle<()>,
+    map_receive_task: JoinHandle<()>,
     send_task: JoinHandle<()>,
     send_message: UnboundedSender<NetworkPacket>,
     //addr: SocketAddr,
@@ -58,12 +53,6 @@ pub trait NetworkServerProvider: 'static + Send + Sync{
     /// This is to configure particular protocols
     type NetworkSettings: Send + Sync + Clone;
 
-    /// This is the type given to the listener to start listening.
-    type ListenInfo: Send;
-
-    /// The type that accepts new connections to the server.
-    type Listener: Send;
-
     /// The type that acts as a combined sender and reciever for a client.
     /// This type needs to be able to be split.
     type Socket: Send;
@@ -73,40 +62,15 @@ pub trait NetworkServerProvider: 'static + Send + Sync{
     
     /// The write half of the given socket type.
     type WriteHalf: Send;
-
-    /// The parameters used by the read function that need to be created at runtime.
-    type ReadParams: Send;
-
-    /// The parameters used by the write function that need to be created at runtime.
-    type WriteParams: Send;
-
-    /// The parameters used by the listen function that need to be created at runtime.
-    type ListenParams: Send;
-
-    /// The error type associated with this provider.
-    type ProtocolErrors: Sync + Send + std::fmt::Debug + std::fmt::Display;
-
-    /// Create the [`NetworkServerProvider::WriteParams`] that will be used by the write function.
-    fn init_listen<'a> (settings: &'a Self::NetworkSettings, runtime: &'a Runtime) -> Self::ListenParams; 
-
-    /// Creates a new listener, this listener will be passed to 
-    /// [`NetworkServerProvider::listener`] to get new connections.
-    async fn listen(listen_info: Self::ListenInfo, listen_params: Self::ListenParams) -> Result<Self::Listener, Self::ProtocolErrors>;
-
-    /// Recieve a connection.
-    async fn accept<'l>(listener: &'l mut Self::Listener) -> Result<Self::Socket, Self::ProtocolErrors>;
-
-    /// Recieve a message from the client.
-    async fn read_message<'a>(read_half: &'a mut Self::ReadHalf, settings: &'a Self::NetworkSettings, read_params: &'a mut Self::ReadParams) -> Result<NetworkPacket, Self::ProtocolErrors>;
     
-    /// Send a message to the client.
-    async fn send_message<'a>(message: &'a NetworkPacket, write_half: &'a mut Self::WriteHalf, settings: &'a Self::NetworkSettings, write_params: &'a mut Self::WriteParams) -> Result<(), Self::ProtocolErrors>;
+    /// This will be spawned as a background operation to continuously add new connections.
+    async fn accept_loop(network_settings: Self::NetworkSettings, new_connections: UnboundedSender<Self::Socket>, errors: UnboundedSender<NetworkError>);
 
-    /// Create the [`NetworkServerProvider::ReadParams`] that will be used by the read function.
-    fn init_read<'a> (settings: &'a Self::NetworkSettings, runtime: &'a Runtime) -> Self::ReadParams; 
-
-    /// Create the [`NetworkServerProvider::WriteParams`] that will be used by the write function.
-    fn init_write<'a> (settings: &'a Self::NetworkSettings, runtime: &'a Runtime) -> Self::WriteParams; 
+    /// Recieves messages from the client, forwards them to Spicy via a sender.
+    async fn recv_loop(read_half: Self::ReadHalf, messages: UnboundedSender<NetworkPacket>, settings: Self::NetworkSettings);
+    
+    /// Sends messages to the client, receives packages from Spicy via receiver.
+    async fn send_loop(write_half: Self::WriteHalf, messages: UnboundedReceiver<NetworkPacket>, settings: Self::NetworkSettings);
 
     /// Split the socket into a read and write half, so that the two actions
     /// can be handled concurrently.
@@ -119,9 +83,9 @@ pub struct NetworkServer<NSP: NetworkServerProvider> {
     runtime: Runtime,
     recv_message_map: Arc<DashMap<&'static str, Vec<(ConnectionId, Box<dyn NetworkMessage>)>>>,
     established_connections: Arc<DashMap<ConnectionId, ClientConnection>>,
-    new_connections: SyncChannel<NewIncomingConnection<NSP>>,
-    disconnected_connections: SyncChannel<ConnectionId>,
-    error_channel: SyncChannel<NetworkError<NSP::ProtocolErrors>>,
+    new_connections: AsyncChannel<NSP::Socket>,
+    disconnected_connections: AsyncChannel<ConnectionId>,
+    error_channel: AsyncChannel<NetworkError>,
     server_handle: Option<JoinHandle<()>>,
     provider: NSP,
 }
@@ -145,9 +109,9 @@ impl<NSP: NetworkServerProvider> NetworkServer<NSP> {
                 .expect("Could not build tokio runtime"),
             recv_message_map: Arc::new(DashMap::new()),
             established_connections: Arc::new(DashMap::new()),
-            new_connections: SyncChannel::new(),
-            disconnected_connections: SyncChannel::new(),
-            error_channel: SyncChannel::new(),
+            new_connections: AsyncChannel::new(),
+            disconnected_connections: AsyncChannel::new(),
+            error_channel: AsyncChannel::new(),
             server_handle: None,
             provider
         }
@@ -159,51 +123,15 @@ impl<NSP: NetworkServerProvider> NetworkServer<NSP> {
     /// If you are already listening for new connections, then this will disconnect existing connections first
     pub fn listen(
         &mut self,
-        listen_info: impl Into<NSP::ListenInfo>,
         network_settings: &NSP::NetworkSettings,
-    ) -> Result<(), NetworkError<NSP::ProtocolErrors>> {
+    ) -> Result<(), NetworkError> {
         self.stop();
 
         let new_connections = self.new_connections.sender.clone();
         let error_sender = self.error_channel.sender.clone();
-        let listen_info = listen_info.into();
-        let listen_params = NSP::init_listen(network_settings, &self.runtime);
 
         
-        let listen_loop = async move {
-            let mut listener = match NSP::listen(listen_info, listen_params).await {
-                Ok(listener) => listener,
-                Err(err) => {
-                    match error_sender.send(NetworkError::<NSP::ProtocolErrors>::Provider(err)) {
-                        Ok(_) => (),
-                        Err(err) => {
-                            error!("Could not send listen error: {}", err);
-                        }
-                    }
-
-                    return;
-                }
-            };
-
-            let new_connections = new_connections;
-            loop {
-                let resp = match NSP::accept(&mut listener).await {
-                    Ok(socket) => NewIncomingConnection { socket },
-                    Err(error) =>  {
-                        if let Err(err)  = error_sender.send(NetworkError::Provider(error)){
-                            error!("Cannot accept more errors, channel closed: {}", err);
-                            break;
-                        };
-                        continue;
-                    },
-                };
-
-                if let Err(err) = new_connections.send(resp) {
-                    error!("Cannot accept new connections, channel closed: {}", err);
-                    break;
-                }
-            }
-        };
+        let listen_loop = NSP::accept_loop(network_settings.clone(), new_connections, error_sender);
 
         trace!("Started listening");
 
@@ -217,7 +145,7 @@ impl<NSP: NetworkServerProvider> NetworkServer<NSP> {
         &self,
         client_id: ConnectionId,
         message: T,
-    ) -> Result<(), NetworkError<NSP::ProtocolErrors>> {
+    ) -> Result<(), NetworkError> {
         let connection = match self.established_connections.get(&client_id) {
             Some(conn) => conn,
             None => return Err(NetworkError::ConnectionNotFound(client_id)),
@@ -269,12 +197,12 @@ impl<NSP: NetworkServerProvider> NetworkServer<NSP> {
             self.established_connections.clear();
             self.recv_message_map.clear();
 
-            self.new_connections.receiver.try_iter().for_each(|_| ());
+            while let Ok(_) = self.new_connections.receiver.try_recv(){}
         }
     }
 
     /// Disconnect a specific client
-    pub fn disconnect(&self, conn_id: ConnectionId) -> Result<(), NetworkError<NSP::ProtocolErrors>> {
+    pub fn disconnect(&self, conn_id: ConnectionId) -> Result<(), NetworkError> {
         let connection = if let Some(conn) = self.established_connections.remove(&conn_id) {
             conn
         } else {
@@ -288,52 +216,32 @@ impl<NSP: NetworkServerProvider> NetworkServer<NSP> {
 }
 
 pub(crate) fn handle_new_incoming_connections<NSP: NetworkServerProvider>(
-    server: Res<NetworkServer<NSP>>,
+    mut server: ResMut<NetworkServer<NSP>>,
     network_settings: Res<NSP::NetworkSettings>,
-    mut network_events: EventWriter<ServerNetworkEvent<NSP>>,
+    mut network_events: EventWriter<ServerNetworkEvent>,
 ) {
-    for new_conn in server.new_connections.receiver.try_iter() {
+    while let Ok(new_conn) = server.new_connections.receiver.try_recv() {
 
             let conn_id = ConnectionId {
                 uuid: Uuid::new_v4(),
-                //addr: new_conn.addr,
             };
 
-            let (mut read_half, mut write_half) = NSP::split(new_conn.socket);
+            let (read_half, write_half) = NSP::split(new_conn);
             let recv_message_map = server.recv_message_map.clone();
             let read_network_settings = network_settings.clone();
             let write_network_settings = network_settings.clone();
             let disconnected_connections = server.disconnected_connections.sender.clone();
 
-            let (send_message, recv_message) = unbounded_channel();
-            let mut read_params = NSP::init_read(&read_network_settings, &server.runtime);
-            let mut write_params = NSP::init_write(&write_network_settings, &server.runtime);
+            let (outgoing_tx, outgoing_rx) = unbounded_channel();
+            let (incoming_tx, mut incoming_rx) = unbounded_channel();
 
             server.established_connections.insert(
                 conn_id,
                 ClientConnection {
                     id: conn_id,
                     receive_task: server.runtime.spawn(async move {
-                        let recv_message_map = recv_message_map;
-
                         trace!("Starting listen task for {}", conn_id);
-                        loop {
-
-                            let packet = match NSP::read_message(&mut read_half, &read_network_settings, &mut read_params).await {
-                                Ok(packet) => packet,
-                                Err(err) => {
-                                    error!("Failed to decode network packet from [{}]: {}", conn_id, err);
-                                    break;
-                                }
-                            };
-
-                            match recv_message_map.get_mut(&packet.kind[..]) {
-                                Some(mut packets) => packets.push((conn_id, packet.data)),
-                                None => {
-                                    error!("Could not find existing entries for message kinds: {:?}", packet);
-                                }
-                            }
-                        }
+                        NSP::recv_loop(read_half, incoming_tx, read_network_settings).await;
 
                         match disconnected_connections.send(conn_id) {
                             Ok(_) => (),
@@ -342,23 +250,21 @@ pub(crate) fn handle_new_incoming_connections<NSP: NetworkServerProvider>(
                             }
                         }
                     }),
-                    send_task: server.runtime.spawn(async move {
-                        let mut recv_message = recv_message;
-
-                        let mut write_half = write_half;
-
-
-                        while let Some(message) = recv_message.recv().await {
-                            match NSP::send_message(&message, &mut write_half, &write_network_settings, &mut write_params).await {
-                                Ok(_) => (),
-                                Err(err) => {
-                                    error!("Could not send packet: {:?}: {}", message, err);
-                                    return;
+                    map_receive_task: server.runtime.spawn(async move{
+                        while let Some(packet) = incoming_rx.recv().await{
+                            match recv_message_map.get_mut(&packet.kind[..]) {
+                                Some(mut packets) => packets.push((conn_id, packet.data)),
+                                None => {
+                                    error!("Could not find existing entries for message kinds: {:?}", packet);
                                 }
                             }
                         }
                     }),
-                    send_message,
+                    send_task: server.runtime.spawn(async move {
+                        trace!("Starting send task for {}", conn_id);
+                        NSP::send_loop(write_half, outgoing_rx, write_network_settings).await;
+                    }),
+                    send_message: outgoing_tx,
                     //addr: new_conn.addr,
                 },
             );
@@ -367,9 +273,7 @@ pub(crate) fn handle_new_incoming_connections<NSP: NetworkServerProvider>(
         
     }
 
-    let disconnected_connections = &server.disconnected_connections.receiver;
-
-    for disconnected_connection in disconnected_connections.try_iter() {
+    while let Ok(disconnected_connection) = server.disconnected_connections.receiver.try_recv() {
         server
             .established_connections
             .remove(&disconnected_connection);

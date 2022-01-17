@@ -1,8 +1,8 @@
 use std::net::SocketAddr;
 
 use bevy::prelude::{error, trace, debug};
-use bevy_spicy_networking::{async_trait, server::NetworkServerProvider, client::NetworkClientProvider, NetworkPacket};
-use tokio::{net::{TcpListener, TcpStream, tcp::{OwnedReadHalf, OwnedWriteHalf}}, io::{AsyncReadExt, AsyncWriteExt}, runtime::Runtime};
+use bevy_spicy_networking::{async_trait, server::NetworkServerProvider, client::NetworkClientProvider, NetworkPacket, ClientNetworkEvent, error::NetworkError};
+use tokio::{net::{TcpListener, TcpStream, tcp::{OwnedReadHalf, OwnedWriteHalf}}, io::{AsyncReadExt, AsyncWriteExt}, runtime::Runtime, sync::mpsc::{UnboundedSender, UnboundedReceiver}};
 
 #[derive(Default)]
 pub struct TokioTcpStreamServerProvider;
@@ -15,112 +15,133 @@ impl NetworkServerProvider for TokioTcpStreamServerProvider{
     
     type NetworkSettings = NetworkSettings;
 
-    type ListenInfo = SocketAddr;
-
-    type Listener = TcpListener;
-
     type Socket = TcpStream;
 
     type ReadHalf = OwnedReadHalf;
 
     type WriteHalf = OwnedWriteHalf;
 
-    type ReadParams = Vec<u8>;
-
-    type WriteParams = ();
-
-    type ListenParams = ();
-
-    type ProtocolErrors = TokioTCPProviderErrors;
-
-    fn init_listen<'a> (settings: &'a Self::NetworkSettings, runtime: &'a Runtime) -> Self::ListenParams{
-        
-    }
-
-    async fn listen(listen_info: Self::ListenInfo, listen_params: Self::ListenParams) -> Result<Self::Listener, Self::ProtocolErrors>{
-        TcpListener::bind(listen_info).await.map_err(|e| TokioTCPProviderErrors::ConnectError)
-    }
-
-    async fn accept<'l>(listener: &'l mut Self::Listener) -> Result<Self::Socket, Self::ProtocolErrors>{
-        match listener.accept().await{
-            Ok((socket, addr)) => {
-                match socket.set_nodelay(true) {
+    async fn accept_loop(network_settings: Self::NetworkSettings, new_connections: UnboundedSender<Self::Socket>, errors: UnboundedSender<NetworkError>){
+        let listener = match TcpListener::bind(network_settings.addr).await {
+            Ok(listener) => listener,
+            Err(err) => {
+                match errors.send(NetworkError::Listen(err)) {
                     Ok(_) => (),
-                    Err(e) => error!("Could not set nodelay for [{}]: {}", addr, e),
-                };
-                Ok(socket)
-            },
-            Err(err) => Err(TokioTCPProviderErrors::ConnectError)
-        }
-    }
+                    Err(err) => {
+                        error!("Could not send listen error: {}", err);
+                    }
+                }
 
-    fn init_read<'a>(settings: &'a Self::NetworkSettings, runtime: &'a Runtime) -> Self::ReadParams{
-        (0..settings.max_packet_length).map(|_| 0).collect()
-    }
-
-    async fn read_message<'a>(read_half: &'a mut Self::ReadHalf, settings: &'a Self::NetworkSettings, read_params: &'a mut Self::ReadParams) -> Result<NetworkPacket, Self::ProtocolErrors>{
-        trace!("Listening for length!");
-
-        let length = match read_half.read_u32().await {
-            Ok(len) => len as usize,
-            Err(err) => {
-                // If we get an EOF here, the connection was broken and we simply report a 'disconnected' signal
-                error!("Encountered error while reading length {}", err);
-                return Err(TokioTCPProviderErrors::ReadError);
+                return;
             }
         };
 
-        trace!("Received packet with length: {}", length);
+        let new_connections = new_connections;
+        loop {
+            let resp = match listener.accept().await {
+                Ok((socket, addr)) => socket,
+                Err(error) => {
+                    errors.send(NetworkError::Accept(error));
+                    continue;
+                },
+            };
 
-        if length > settings.max_packet_length {
-            error!("Received too large packet from {} > {}", length, settings.max_packet_length);
-            return Err(TokioTCPProviderErrors::PacketSizeError);
-        }
-
-
-        match read_half.read_exact(&mut read_params[..length]).await {
-            Ok(_) => (),
-            Err(err) => {
-                error!("Encountered error while reading stream of length {}: {}", length, err);
-                return Err(TokioTCPProviderErrors::ReadError);
+            match new_connections.send(resp) {
+                Ok(_) => (),
+                Err(err) => {
+                    error!("Cannot accept new connections, channel closed: {}", err);
+                    break;
+                }
             }
         }
-
-        trace!("Read buffer of length {}", length);
-
-
-        trace!("Created a network packet");
-
-        let res = bincode::deserialize(&read_params[..length]).map_err(|e| TokioTCPProviderErrors::DeserializeError);
-        
-        debug!("Received new message of length: {}", length);
-
-        res
     }
 
-    fn init_write<'a>(settings: &'a Self::NetworkSettings, runtime: &'a Runtime) -> Self::WriteParams{
-        ()
-    }
+    async fn recv_loop(mut read_half: Self::ReadHalf, messages: UnboundedSender<NetworkPacket>, settings: Self::NetworkSettings){
+        let mut buffer: Vec<u8> = (0..settings.max_packet_length).map(|_| 0).collect();
+        loop {
+            let length = match read_half.read_u32().await {
+                Ok(len) => len as usize,
+                Err(err) => {
+                    error!(
+                        "Encountered error while fetching length: {}",
+                        err
+                    );
+                    break;
+                }
+            };
 
-    async fn send_message<'a>(message: &'a NetworkPacket, write_half: &'a mut Self::WriteHalf, settings: &'a Self::NetworkSettings, write_params: &'a mut Self::WriteParams) -> Result<(), Self::ProtocolErrors>{
-        let encoded = match bincode::serialize(&message) {
-            Ok(encoded) => encoded,
-            Err(err) =>  {
-                return Err(TokioTCPProviderErrors::SerializeError);
+            if length > settings.max_packet_length {
+                error!(
+                    "Received too large packet: {} > {}",
+                    length, settings.max_packet_length
+                );
+                break;
             }
-        };
 
-        let len = encoded.len();
+            match read_half.read_exact(&mut buffer[..length]).await {
+                Ok(_) => (),
+                Err(err) => {
+                    error!(
+                        "Encountered error while fetching stream of length {}: {}",
+                        length, err
+                    );
+                    break;
+                }
+            }
 
-        match write_half.write_u32(len as u32).await {
-            Ok(_) => (),
-            Err(err) => {
-                return Err(TokioTCPProviderErrors::WriteError);
+            let packet: NetworkPacket = match bincode::deserialize(&buffer[..length]) {
+                Ok(packet) => packet,
+                Err(err) => {
+                    error!(
+                        "Failed to decode network packet from: {}",
+                        err
+                    );
+                    break;
+                }
+            };
+
+            if let Err(_) = messages.send(packet){
+                error!("Failed to send decoded message to Spicy");
+                break;
             }
         }
-
-        write_half.write_all(&encoded).await.map_err(|e| TokioTCPProviderErrors::WriteError)
     }
+
+    async fn send_loop(mut write_half: Self::WriteHalf, mut messages: UnboundedReceiver<NetworkPacket>, settings: Self::NetworkSettings){
+        while let Some(message) = messages.recv().await {
+            let encoded = match bincode::serialize(&message) {
+                Ok(encoded) => encoded,
+                Err(err) => {
+                    error!("Could not encode packet {:?}: {}", message, err);
+                    continue;
+                }
+            };
+
+            let len = encoded.len();
+            debug!("Sending a new message of size: {}", len);
+
+            match write_half.write_u32(len as u32).await {
+                Ok(_) => (),
+                Err(err) => {
+                    error!("Could not send packet length: {:?}: {}", len, err);
+                    break;
+                }
+            }
+
+            trace!("Sending the content of the message!");
+
+            match write_half.write_all(&encoded).await {
+                Ok(_) => (),
+                Err(err) => {
+                    error!("Could not send packet: {:?}: {}", message, err);
+                    break;
+                }
+            }
+
+            trace!("Succesfully written all!");
+        }
+    }
+    
 
     fn split(combined: Self::Socket) -> (Self::ReadHalf, Self::WriteHalf){
         combined.into_split()
@@ -138,102 +159,128 @@ impl NetworkClientProvider for TokioTcpStreamClientProvider{
     
     type NetworkSettings = NetworkSettings;
 
-    type ConnectInfo = SocketAddr;
-
     type Socket = TcpStream;
 
     type ReadHalf = OwnedReadHalf;
 
     type WriteHalf = OwnedWriteHalf;
 
-    type ReadParams = Vec<u8>;
+    async fn connect_task(network_settings: Self::NetworkSettings, new_connections: UnboundedSender<Self::Socket>, errors: UnboundedSender<ClientNetworkEvent>){
+        let stream = match TcpStream::connect(network_settings.addr).await {
+            Ok(stream) => stream,
+            Err(error) => {
+                match errors
+                    .send(ClientNetworkEvent::Error(NetworkError::Connection(error)))
+                {
+                    Ok(_) => (),
+                    Err(err) => {
+                        error!("Could not send error event: {}", err);
+                    }
+                }
 
-    type WriteParams = ();
-
-    type ProtocolErrors = TokioTCPProviderErrors;
-
-    async fn connect(connect_info: Self::ConnectInfo) -> Result<Self::Socket, Self::ProtocolErrors>{
-        Self::Socket::connect(connect_info).await.map_err(|e| TokioTCPProviderErrors::ConnectError)
-    }
-
-    async fn read_message<'a>(read_half: &'a mut Self::ReadHalf, settings: &'a Self::NetworkSettings, read_params: &'a mut Self::ReadParams) -> Result<NetworkPacket, Self::ProtocolErrors>{
-        let length = match read_half.read_u32().await {
-            Ok(len) => len as usize,
-            Err(err) => {
-                error!(
-                    "Encountered error while fetching length : {}",
-                    err
-                );
-                return Err(TokioTCPProviderErrors::ReadError);
+                return;
             }
         };
 
-        if length > settings.max_packet_length {
-            error!(
-                "Received too large packet from: {} > {}",
-                length, settings.max_packet_length
-            );
-            return Err(TokioTCPProviderErrors::PacketSizeError);
-        }
+        let addr = stream
+            .peer_addr()
+            .expect("Could not fetch peer_addr of existing stream");
 
-        match read_half.read_exact(&mut read_params[..length]).await {
+        match new_connections.send(stream) {
             Ok(_) => (),
             Err(err) => {
-                error!(
-                    "Encountered error while fetching stream of length {}: {}",
-                    length, err
-                );
-                return Err(TokioTCPProviderErrors::ReadError);
+                error!("Could not initiate connection: {}", err);
             }
         }
 
-        trace!("Read buffer of length {}", length);
+        debug!("Connected to: {:?}", addr);
+    }
 
+    async fn recv_loop(mut read_half: Self::ReadHalf, messages: UnboundedSender<NetworkPacket>, settings: Self::NetworkSettings){
+        let mut buffer: Vec<u8> = (0..settings.max_packet_length).map(|_| 0).collect();
+        loop {
+            let length = match read_half.read_u32().await {
+                Ok(len) => len as usize,
+                Err(err) => {
+                    error!(
+                        "Encountered error while fetching length: {}",
+                        err
+                    );
+                    break;
+                }
+            };
 
-        trace!("Created a network packet");
+            if length > settings.max_packet_length {
+                error!(
+                    "Received too large packet: {} > {}",
+                    length, settings.max_packet_length
+                );
+                break;
+            }
 
-        let res = bincode::deserialize(&read_params[..length]).map_err(|e| TokioTCPProviderErrors::DeserializeError);
-        
-        debug!("Received new message of length: {}", length);
+            match read_half.read_exact(&mut buffer[..length]).await {
+                Ok(_) => (),
+                Err(err) => {
+                    error!(
+                        "Encountered error while fetching stream of length {}: {}",
+                        length, err
+                    );
+                    break;
+                }
+            }
 
-        res
+            let packet: NetworkPacket = match bincode::deserialize(&buffer[..length]) {
+                Ok(packet) => packet,
+                Err(err) => {
+                    error!(
+                        "Failed to decode network packet from: {}",
+                        err
+                    );
+                    break;
+                }
+            };
+
+            if let Err(_) = messages.send(packet){
+                error!("Failed to send decoded message to Spicy");
+                break;
+            }
+        }
     }
     
-    async fn send_message<'a>(message: &'a NetworkPacket, write_half: &'a mut Self::WriteHalf, settings: &'a Self::NetworkSettings, write_params: &'a mut Self::WriteParams) -> Result<(), Self::ProtocolErrors>{
-        let encoded = match bincode::serialize(&message) {
-            Ok(encoded) => encoded,
-            Err(err) => {
-                error!("Could not encode packet {:?}: {}", message, err);
-                return Err(TokioTCPProviderErrors::SerializeError);
+    async fn send_loop(mut write_half: Self::WriteHalf, mut messages: UnboundedReceiver<NetworkPacket>, settings: Self::NetworkSettings){
+        while let Some(message) = messages.recv().await {
+            let encoded = match bincode::serialize(&message) {
+                Ok(encoded) => encoded,
+                Err(err) => {
+                    error!("Could not encode packet {:?}: {}", message, err);
+                    continue;
+                }
+            };
+
+            let len = encoded.len();
+            debug!("Sending a new message of size: {}", len);
+
+            match write_half.write_u32(len as u32).await {
+                Ok(_) => (),
+                Err(err) => {
+                    error!("Could not send packet length: {:?}: {}", len, err);
+                    break;
+                }
             }
-        };
 
-        let len = encoded.len();
-        debug!("Sending a new message of size: {}", len);
+            trace!("Sending the content of the message!");
 
-        match write_half.write_u32(len as u32).await {
-            Ok(_) => (),
-            Err(err) => {
-                error!("Could not send packet length: {:?}: {}", len, err);
-                return Err(TokioTCPProviderErrors::WriteError);
+            match write_half.write_all(&encoded).await {
+                Ok(_) => (),
+                Err(err) => {
+                    error!("Could not send packet: {:?}: {}", message, err);
+                    break;
+                }
             }
-        }
 
-        trace!("Sending the content of the message!");
-
-        match write_half.write_all(&encoded).await {
-            Ok(_) => Ok(()),
-            Err(err) => {
-                return Err(TokioTCPProviderErrors::WriteError);
-            }
+            trace!("Succesfully written all!");
         }
     }
-
-    fn init_read<'a> (settings: &'a Self::NetworkSettings) -> Self::ReadParams{
-        (0..settings.max_packet_length).map(|_| 0).collect()
-    }
-
-    fn init_write<'a> (settings: &'a Self::NetworkSettings) -> Self::WriteParams{} 
 
     fn split(combined: Self::Socket) -> (Self::ReadHalf, Self::WriteHalf){
         combined.into_split()
@@ -249,35 +296,14 @@ pub struct NetworkSettings {
     /// ## Default
     /// The default is set to 10MiB
     pub max_packet_length: usize,
+    pub addr: SocketAddr,
 }
 
-impl Default for NetworkSettings {
-    fn default() -> Self {
-        NetworkSettings {
+impl NetworkSettings{
+    pub fn new(addr: impl Into<SocketAddr>) -> Self{
+        Self{
             max_packet_length: 10 * 1024 * 1024,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum TokioTCPProviderErrors{
-    ReadError,
-    WriteError,
-    SerializeError,
-    DeserializeError,
-    PacketSizeError,
-    ConnectError,
-}
-
-impl std::fmt::Display for TokioTCPProviderErrors{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self{
-            TokioTCPProviderErrors::ReadError => write!(f, "ReadError"),
-            TokioTCPProviderErrors::WriteError => write!(f, "WriteError"),
-            TokioTCPProviderErrors::DeserializeError => write!(f, "DeserializeError"),
-            TokioTCPProviderErrors::SerializeError => write!(f, "SerializeError"),
-            TokioTCPProviderErrors::PacketSizeError => write!(f, "PacketSizeError"),
-            TokioTCPProviderErrors::ConnectError => write!(f, "ConnectError")
+            addr: addr.into()
         }
     }
 }

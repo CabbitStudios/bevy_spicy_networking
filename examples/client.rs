@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 use bevy_spicy_networking::{ClientNetworkEvent, NetworkClient, NetworkData};
-use std::net::SocketAddr;
+use std::{net::{SocketAddr, IpAddr}, str::FromStr};
 
 use bevy_spicy_networking_tokio_tcp::{TokioTcpStreamClientProvider, NetworkSettings};
 
@@ -27,7 +27,7 @@ fn main() {
     app.add_system(handle_message_button.system());
     app.add_system(handle_incoming_messages.system());
     app.add_system(handle_network_events.system());
-    app.init_resource::<NetworkSettings>();
+    app.insert_resource(NetworkSettings::new((IpAddr::from_str("127.0.0.1").unwrap(), 8080)));
 
     app.init_resource::<GlobalChatSettings>();
 
@@ -52,7 +52,7 @@ fn handle_incoming_messages(
 }
 
 fn handle_network_events(
-    mut new_network_events: EventReader<ClientNetworkEvent<TokioTcpStreamClientProvider>>,
+    mut new_network_events: EventReader<ClientNetworkEvent>,
     connect_query: Query<&Children, With<ConnectButton>>,
     mut text_query: Query<&mut Text>,
     mut messages: Query<&mut GameChatMessages>,
@@ -194,6 +194,7 @@ struct ConnectButton;
 
 fn handle_connect_button(
     mut net: ResMut<NetworkClient<TokioTcpStreamClientProvider>>,
+    settings: Res<NetworkSettings>,
     interaction_query: Query<
         (&Interaction, &Children),
         (Changed<Interaction>, With<ConnectButton>),
@@ -216,14 +217,8 @@ fn handle_connect_button(
                 text.sections[0].value = String::from("Connecting...");
                 messages.add(SystemMessage::new("Connecting to server..."));
 
-                let ip_address = "127.0.0.1".parse().unwrap();
-
-                info!("Address of the server: {}", ip_address);
-
-                let socket_address = SocketAddr::new(ip_address, 9999);
-
                 net.connect(
-                    socket_address
+                    &settings
                 );
             }
         }

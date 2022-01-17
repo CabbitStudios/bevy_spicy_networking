@@ -144,13 +144,14 @@ games where less-stringent latency delays might be acceptable.
 
 /// Contains all functionality for contenctin to a server, sending, and recieving messages with it.
 pub mod client;
-mod error;
+/// Contains error enum.
+pub mod error;
 mod network_message;
 
 /// Contains all functionality for starting a server, sending, and recieving messages from clients.
 pub mod server;
 
-use std::{net::{IpAddr, Ipv4Addr, SocketAddr}, marker::PhantomData};
+use std::{net::{IpAddr, Ipv4Addr, SocketAddr}, marker::PhantomData, fmt::Debug};
 
 use bevy::{prelude::*, utils::Uuid};
 pub use client::{AppNetworkClientMessage, NetworkClient, NetworkClientProvider};
@@ -161,6 +162,7 @@ pub use network_message::{ClientMessage, NetworkMessage, ServerMessage};
 use serde::{Deserialize, Serialize};
 pub use server::{AppNetworkServerMessage, NetworkServer, NetworkServerProvider};
 pub use async_trait::async_trait;
+use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver, unbounded_channel};
 
 struct SyncChannel<T> {
     pub(crate) sender: Sender<T>,
@@ -172,6 +174,19 @@ impl<T> SyncChannel<T> {
         let (sender, receiver) = unbounded();
 
         SyncChannel { sender, receiver }
+    }
+}
+
+struct AsyncChannel<T> {
+    pub(crate) sender: UnboundedSender<T>,
+    pub(crate) receiver: UnboundedReceiver<T>,
+}
+
+impl<T> AsyncChannel<T> {
+    fn new() -> Self {
+        let (sender, receiver) = unbounded_channel();
+
+        Self { sender, receiver }
     }
 }
 
@@ -216,7 +231,7 @@ pub struct NetworkPacket {
     data: Box<dyn NetworkMessage>,
 }
 
-impl std::fmt::Debug for NetworkPacket {
+impl Debug for NetworkPacket {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NetworkPacket")
             .field("kind", &self.kind)
@@ -226,24 +241,24 @@ impl std::fmt::Debug for NetworkPacket {
 
 /// A network event originating from a [`NetworkServer`]
 #[derive(Debug)]
-pub enum ServerNetworkEvent<NSP: NetworkServerProvider> {
+pub enum ServerNetworkEvent {
     /// A new client has connected
     Connected(ConnectionId),
     /// A client has disconnected
     Disconnected(ConnectionId),
     /// An error occured while trying to do a network operation
-    Error(NetworkError<NSP::ProtocolErrors>),
+    Error(NetworkError),
 }
 
 #[derive(Debug)]
 /// A network event originating from a [`NetworkClient`]
-pub enum ClientNetworkEvent<NCP: NetworkClientProvider> {
+pub enum ClientNetworkEvent {
     /// Connected to a server
     Connected,
     /// Disconnected from a server
     Disconnected,
     /// An error occured while trying to do a network operation
-    Error(NetworkError<NCP::ProtocolErrors>),
+    Error(NetworkError),
 }
 
 #[derive(Debug, Deref)]
@@ -280,7 +295,7 @@ pub struct ServerPlugin<NSP: NetworkServerProvider>(NSP);
 impl<NSP: NetworkServerProvider + Default> Plugin for ServerPlugin<NSP> {
     fn build(&self, app: &mut App) {
         app.insert_resource(server::NetworkServer::new(NSP::default()));
-        app.add_event::<ServerNetworkEvent<NSP>>();
+        app.add_event::<ServerNetworkEvent>();
         app.add_system_to_stage(
             CoreStage::PreUpdate,
             server::handle_new_incoming_connections::<NSP>,
@@ -296,7 +311,7 @@ pub struct ClientPlugin<NCP: NetworkClientProvider>(NCP);
 impl<NCP: NetworkClientProvider + Default> Plugin for ClientPlugin<NCP> {
     fn build(&self, app: &mut App) {
         app.insert_resource(client::NetworkClient::new(NCP::default()));
-        app.add_event::<ClientNetworkEvent<NCP>>();
+        app.add_event::<ClientNetworkEvent>();
         app.add_system_to_stage(
             CoreStage::PreUpdate,
             client::send_client_network_events::<NCP>,

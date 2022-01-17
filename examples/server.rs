@@ -1,7 +1,8 @@
 use bevy::app::ScheduleRunnerSettings;
 use bevy::prelude::*;
 use bevy_spicy_networking::{ConnectionId, NetworkData, NetworkServer, ServerNetworkEvent};
-use std::net::SocketAddr;
+use std::net::{SocketAddr, IpAddr};
+use std::str::FromStr;
 use std::time::Duration;
 
 use bevy_spicy_networking_tokio_tcp::{TokioTcpStreamServerProvider, NetworkSettings};
@@ -27,7 +28,7 @@ fn main() {
     app.add_startup_system(setup_networking);
     app.add_system(handle_connection_events);
     app.add_system(handle_messages);
-    app.init_resource::<NetworkSettings>();
+    app.insert_resource(NetworkSettings::new((IpAddr::from_str("127.0.0.1").unwrap(), 8080)));
 
     app.run();
 }
@@ -41,7 +42,7 @@ fn setup_networking(mut net: ResMut<NetworkServer<TokioTcpStreamServerProvider>>
 
     let socket_address = SocketAddr::new(ip_address, 9999);
 
-    match net.listen(socket_address, &settings) {
+    match net.listen(&settings) {
         Ok(_) => (),
         Err(err) => {
             error!("Could not start listening: {}", err);
@@ -58,7 +59,7 @@ struct Player(ConnectionId);
 fn handle_connection_events(
     mut commands: Commands,
     net: Res<NetworkServer<TokioTcpStreamServerProvider>>,
-    mut network_events: EventReader<ServerNetworkEvent<TokioTcpStreamServerProvider>>,
+    mut network_events: EventReader<ServerNetworkEvent>,
 ) {
     for event in network_events.iter() {
         if let ServerNetworkEvent::Connected(conn_id) = event {

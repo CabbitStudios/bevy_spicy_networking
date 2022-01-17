@@ -7,7 +7,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpStream, ToSocketAddrs},
     runtime::Runtime,
-    sync::mpsc::{unbounded_channel, UnboundedSender},
+    sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver},
     task::JoinHandle,
 };
 use async_trait::async_trait;
@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use crate::{
     error::NetworkError,
     network_message::{ClientMessage, NetworkMessage, ServerMessage},
-    ClientNetworkEvent, ConnectionId, NetworkData, NetworkPacket, SyncChannel,
+    ClientNetworkEvent, ConnectionId, NetworkData, NetworkPacket, SyncChannel, AsyncChannel,
 };
 
 /// A trait used by [`NetworkClient`] to drive a client, this is responsible
@@ -24,9 +24,6 @@ use crate::{
 pub trait NetworkClientProvider: 'static + Send + Sync{
     /// This is to configure particular protocols
     type NetworkSettings: Send + Sync + Clone;
-
-    /// This is the type given to the listener to start listening.
-    type ConnectInfo: Send;
 
     /// The type that acts as a combined sender and reciever for a client.
     /// This type needs to be able to be split.
@@ -38,29 +35,14 @@ pub trait NetworkClientProvider: 'static + Send + Sync{
     /// The write half of the given socket type.
     type WriteHalf: Send;
 
-    /// The parameters used by the read function that need to be created.
-    type ReadParams: Send;
+    /// Connect to the server, this will technically live as a long running task, but it can complete.
+    async fn connect_task(network_settings: Self::NetworkSettings, new_connections: UnboundedSender<Self::Socket>, errors: UnboundedSender<ClientNetworkEvent>);
 
-    /// The parameters used by the write function that need to be created.
-    type WriteParams: Send;
-
-    /// The error type associated with this provider.
-    type ProtocolErrors: Sync + Send + std::fmt::Debug + std::fmt::Display;
-
-    /// Recieve a connection.
-    async fn connect(connection_info: Self::ConnectInfo) -> Result<Self::Socket, Self::ProtocolErrors>;
-
-    /// Recieve a message from the client.
-    async fn read_message<'a>(read_half: &'a mut Self::ReadHalf, settings: &'a Self::NetworkSettings, read_params: &'a mut Self::ReadParams) -> Result<NetworkPacket, Self::ProtocolErrors>;
+    /// Recieves messages from the server.
+    async fn recv_loop(read_half: Self::ReadHalf, messages: UnboundedSender<NetworkPacket>, settings: Self::NetworkSettings);
     
-    /// Send a message to the client.
-    async fn send_message<'a>(message: &'a NetworkPacket, write_half: &'a mut Self::WriteHalf, settings: &'a Self::NetworkSettings, write_params: &'a mut Self::WriteParams) -> Result<(), Self::ProtocolErrors>;
-
-    /// Create the [`NetworkServerProvider::ReadParams`] that will be used by the read function.
-    fn init_read<'a> (settings: &'a Self::NetworkSettings) -> Self::ReadParams; 
-
-    /// Create the [`NetworkServerProvider::WriteParams`] that will be used by the write function.
-    fn init_write<'a> (settings: &'a Self::NetworkSettings) -> Self::WriteParams; 
+    /// Writes messages to the server.
+    async fn send_loop(write_half: Self::WriteHalf, messages: UnboundedReceiver<NetworkPacket>, settings: Self::NetworkSettings);
 
     /// Split the socket into a read and write half, so that the two actions
     /// can be handled concurrently.
@@ -72,6 +54,7 @@ pub trait NetworkClientProvider: 'static + Send + Sync{
 #[display(fmt = "Server connection")]
 struct ServerConnection {
     receive_task: JoinHandle<()>,
+    map_receive_task: JoinHandle<()>,
     send_task: JoinHandle<()>,
     send_message: UnboundedSender<NetworkPacket>,
 }
@@ -89,8 +72,9 @@ pub struct NetworkClient<NCP: NetworkClientProvider> {
     runtime: Runtime,
     server_connection: Option<ServerConnection>,
     recv_message_map: Arc<DashMap<&'static str, Vec<Box<dyn NetworkMessage>>>>,
-    network_events: SyncChannel<ClientNetworkEvent<NCP>>,
-    connection_events: SyncChannel<NCP::Socket>,
+    network_events: AsyncChannel<ClientNetworkEvent>,
+    connection_events: AsyncChannel<NCP::Socket>,
+    connection_task: Option<JoinHandle<()>>,
     provider: NCP,
 }
 
@@ -115,8 +99,9 @@ impl<NCP: NetworkClientProvider> NetworkClient<NCP> {
                 .expect("Could not build tokio runtime"),
             server_connection: None,
             recv_message_map: Arc::new(DashMap::new()),
-            network_events: SyncChannel::new(),
-            connection_events: SyncChannel::new(),
+            network_events: AsyncChannel::new(),
+            connection_events: AsyncChannel::new(),
+            connection_task: None,
             provider
         }
     }
@@ -127,7 +112,7 @@ impl<NCP: NetworkClientProvider> NetworkClient<NCP> {
     /// This will disconnect you first from any existing server connections
     pub fn connect<'a>(
         &mut self,
-        connect_info: impl Into<NCP::ConnectInfo>,
+        connect_info: &NCP::NetworkSettings,
     ) {
         debug!("Starting connection");
 
@@ -135,35 +120,10 @@ impl<NCP: NetworkClientProvider> NetworkClient<NCP> {
 
         let network_error_sender = self.network_events.sender.clone();
         let connection_event_sender = self.connection_events.sender.clone();
-        let connect_info = connect_info.into();
 
-        self.runtime.spawn(async move {
-            let stream = match NCP::connect(connect_info).await {
-                Ok(stream) => stream,
-                Err(error) => {
-                    match network_error_sender
-                        .send(ClientNetworkEvent::Error(NetworkError::Provider(error)))
-                    {
-                        Ok(_) => (),
-                        Err(err) => {
-                            error!("Could not send error event: {}", err);
-                        }
-                    }
-
-                    return;
-                }
-            };
-
-
-            match connection_event_sender.send(stream) {
-                Ok(_) => (),
-                Err(err) => {
-                    error!("Could not initiate connection: {}", err);
-                }
-            }
-
-            debug!("Connected to server!");
-        });
+        self.connection_task = Some(
+            self.runtime.spawn(NCP::connect_task(connect_info.clone(), connection_event_sender, network_error_sender))
+        );
     }
 
     /// a server
@@ -183,7 +143,7 @@ impl<NCP: NetworkClientProvider> NetworkClient<NCP> {
 
     /// Send a message to the connected server, returns `Err(NetworkError::NotConnected)` if
     /// the connection hasn't been established yet
-    pub fn send_message<T: ServerMessage>(&self, message: T) -> Result<(), NetworkError<()>> {
+    pub fn send_message<T: ServerMessage>(&self, message: T) -> Result<(), NetworkError> {
         debug!("Sending message to server");
         let server_connection = match self.server_connection.as_ref() {
             Some(server) => server,
@@ -272,7 +232,7 @@ fn register_client_message<T, NCP: NetworkClientProvider>(
 /// Pushes messages into the network event queue.
 pub fn handle_connection_event<NCP: NetworkClientProvider>(
     mut net_res: ResMut<NetworkClient<NCP>>,
-    mut events: EventWriter<ClientNetworkEvent<NCP>>,
+    mut events: EventWriter<ClientNetworkEvent>,
     network_settings: Res<NCP::NetworkSettings>
 ) {
     let connection =
@@ -285,64 +245,39 @@ pub fn handle_connection_event<NCP: NetworkClientProvider>(
 
     let (read_half, write_half) = NCP::split(connection);
     let recv_message_map = net_res.recv_message_map.clone();
-    let (send_message, recv_message) = unbounded_channel();
+    let (outgoing_tx, outgoing_rx) = unbounded_channel();
+    let (incoming_tx, mut incoming_rx) = unbounded_channel();
     let network_event_sender = net_res.network_events.sender.clone();
-    let network_event_sender_two = net_res.network_events.sender.clone();
     let read_network_settings = network_settings.clone();
     let write_network_settings = network_settings.clone();
 
     net_res.server_connection = Some(ServerConnection {
         send_task: net_res.runtime.spawn(async move {
-            let mut recv_message = recv_message;
-            let mut write_half = write_half;
-            let mut write_params = NCP::init_write(&write_network_settings);
-
-            debug!("Starting new server connection, sending task");
-
-            while let Some(message) = recv_message.recv().await {
-
-                match NCP::send_message(&message, &mut write_half, &write_network_settings, &mut write_params).await {
-                    Ok(_) => (),
-                    Err(err) => {
-                        error!("Could not send packet: {:?}: {}", message, err);
-                        break;
-                    }
-                }
-
-                trace!("Succesfully written all!");
-            }
-
-            let _ = network_event_sender_two.send(ClientNetworkEvent::Disconnected);
+            trace!("Starting send task");
+            NCP::send_loop(write_half, outgoing_rx, write_network_settings).await;
         }),
         receive_task: net_res.runtime.spawn(async move {
-            let mut read_half = read_half;
-            let recv_message_map = recv_message_map;
-            let mut read_params = NCP::init_read(&read_network_settings);
+            trace!("Starting listen task");
+            NCP::recv_loop(read_half, incoming_tx, read_network_settings).await;
 
-            loop {
-                let packet = match NCP::read_message(&mut read_half, &read_network_settings, &mut read_params).await {
-                    Ok(packet) => packet,
-                    Err(err) => {
-                        error!("Failed to decode network packet from server: {}", err);
-                        break;
-                    }
-                };
-
+            match network_event_sender.send(ClientNetworkEvent::Disconnected) {
+                Ok(_) => (),
+                Err(_) => {
+                    error!("Could not send disconnected event, because channel is disconnected");
+                }
+            }
+        }),
+        map_receive_task: net_res.runtime.spawn(async move{
+            while let Some(packet) = incoming_rx.recv().await{
                 match recv_message_map.get_mut(&packet.kind[..]) {
                     Some(mut packets) => packets.push(packet.data),
                     None => {
-                        error!(
-                            "Could not find existing entries for message kinds: {:?}",
-                            packet
-                        );
+                        error!("Could not find existing entries for message kinds: {:?}", packet);
                     }
                 }
-                debug!("Received message from server");
             }
-
-            let _ = network_event_sender.send(ClientNetworkEvent::Disconnected);
         }),
-        send_message,
+        send_message: outgoing_tx,
     });
 
     events.send(ClientNetworkEvent::Connected);
@@ -350,8 +285,8 @@ pub fn handle_connection_event<NCP: NetworkClientProvider>(
 
 /// Takes events and forwards them to the server.
 pub fn send_client_network_events<NCP: NetworkClientProvider>(
-    client_server: ResMut<NetworkClient<NCP>>,
-    mut client_network_events: EventWriter<ClientNetworkEvent<NCP>>,
+    mut client_server: ResMut<NetworkClient<NCP>>,
+    mut client_network_events: EventWriter<ClientNetworkEvent>,
 ) {
-    client_network_events.send_batch(client_server.network_events.receiver.try_iter());
+    client_network_events.send_batch(std::iter::repeat_with(|| client_server.network_events.receiver.try_recv().ok()).map_while(|val| val));
 }
