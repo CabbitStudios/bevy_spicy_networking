@@ -108,6 +108,7 @@ Simply pick the version compatible to your bevy version:
 | Bevy Spicy Networking | Bevy  |
 | :-------------------: | :---: |
 |          0.5          |  0.5  |
+|          0.6          |  0.6  |
 
 Any version that is not compatible with the latest bevy version is in maintenance mode.
 It will only receive minor bug fixes from my side, or community supplied ones.
