@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc, marker::PhantomData};
 
 use bevy::prelude::*;
 use dashmap::DashMap;
@@ -75,7 +75,7 @@ pub struct NetworkClient<NCP: NetworkClientProvider> {
     network_events: AsyncChannel<ClientNetworkEvent>,
     connection_events: AsyncChannel<NCP::Socket>,
     connection_task: Option<JoinHandle<()>>,
-    provider: NCP,
+    provider: PhantomData<NCP>,
 }
 
 impl<NCP: NetworkClientProvider> std::fmt::Debug for NetworkClient<NCP> {

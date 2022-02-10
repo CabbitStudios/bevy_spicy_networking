@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc, marker::PhantomData};
 
 use bevy::{prelude::*, utils::Uuid};
 use dashmap::DashMap;
@@ -87,7 +87,7 @@ pub struct NetworkServer<NSP: NetworkServerProvider> {
     disconnected_connections: AsyncChannel<ConnectionId>,
     error_channel: AsyncChannel<NetworkError>,
     server_handle: Option<JoinHandle<()>>,
-    provider: NSP,
+    provider: PhantomData<NSP>,
 }
 
 impl<NSP: NetworkServerProvider> std::fmt::Debug for NetworkServer<NSP> {
@@ -113,7 +113,7 @@ impl<NSP: NetworkServerProvider> NetworkServer<NSP> {
             disconnected_connections: AsyncChannel::new(),
             error_channel: AsyncChannel::new(),
             server_handle: None,
-            provider
+            provider: PhantomData,
         }
     }
 
