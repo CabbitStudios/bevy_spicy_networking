@@ -158,7 +158,7 @@ pub use client::{AppNetworkClientMessage, NetworkClient, NetworkClientProvider};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use derive_more::{Deref, Display};
 use error::NetworkError;
-pub use network_message::{ClientMessage, NetworkMessage, ServerMessage};
+pub use network_message::{ClientMessage, ServerMessage};
 use serde::{Deserialize, Serialize};
 pub use server::{AppNetworkServerMessage, NetworkServer, NetworkServerProvider};
 pub use async_trait::async_trait;
@@ -228,7 +228,7 @@ impl ConnectionId {
 /// [`NetworkPacket`]s are untyped packets to be sent over the wire
 pub struct NetworkPacket {
     kind: String,
-    data: Box<dyn NetworkMessage>,
+    data: Vec<u8>,
 }
 
 impl Debug for NetworkPacket {

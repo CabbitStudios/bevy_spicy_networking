@@ -14,7 +14,7 @@ use async_trait::async_trait;
 
 use crate::{
     error::NetworkError,
-    network_message::{ClientMessage, NetworkMessage, ServerMessage},
+    network_message::{ClientMessage, ServerMessage},
     ConnectionId, NetworkData, NetworkPacket, ServerNetworkEvent, SyncChannel, AsyncChannel,
 };
 
@@ -81,7 +81,7 @@ pub trait NetworkServerProvider: 'static + Send + Sync{
 /// using [`NetworkServer::listen`]
 pub struct NetworkServer<NSP: NetworkServerProvider> {
     runtime: Runtime,
-    recv_message_map: Arc<DashMap<&'static str, Vec<(ConnectionId, Box<dyn NetworkMessage>)>>>,
+    recv_message_map: Arc<DashMap<&'static str, Vec<(ConnectionId, Vec<u8>)>>>,
     established_connections: Arc<DashMap<ConnectionId, ClientConnection>>,
     new_connections: AsyncChannel<NSP::Socket>,
     disconnected_connections: AsyncChannel<ConnectionId>,
@@ -153,7 +153,7 @@ impl<NSP: NetworkServerProvider> NetworkServer<NSP> {
 
         let packet = NetworkPacket {
             kind: String::from(T::NAME),
-            data: Box::new(message),
+            data: bincode::serialize(&message).unwrap(),
         };
 
         match connection.send_message.send(packet) {
@@ -170,9 +170,10 @@ impl<NSP: NetworkServerProvider> NetworkServer<NSP> {
     /// Broadcast a message to all connected clients
     pub fn broadcast<T: ClientMessage + Clone>(&self, message: T) {
         for connection in self.established_connections.iter() {
+            let serialized_message = bincode::serialize(&message).unwrap();
             let packet = NetworkPacket {
                 kind: String::from(T::NAME),
-                data: Box::new(message.clone()),
+                data: serialized_message,
             };
 
             match connection.send_message.send(packet) {
@@ -324,6 +325,6 @@ fn register_server_message<T, NSP: NetworkServerProvider>(
     events.send_batch(
         messages
             .drain(..)
-            .flat_map(|(conn, msg)| msg.downcast().map(|msg| NetworkData::new(conn, *msg))),
+            .filter_map(|(source, msg)| bincode::deserialize::<T>(&msg).ok().map(|inner| NetworkData{source, inner})),
     );
 }

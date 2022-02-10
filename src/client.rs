@@ -14,7 +14,7 @@ use async_trait::async_trait;
 
 use crate::{
     error::NetworkError,
-    network_message::{ClientMessage, NetworkMessage, ServerMessage},
+    network_message::{ClientMessage, ServerMessage},
     ClientNetworkEvent, ConnectionId, NetworkData, NetworkPacket, SyncChannel, AsyncChannel,
 };
 
@@ -71,7 +71,7 @@ impl ServerConnection {
 pub struct NetworkClient<NCP: NetworkClientProvider> {
     runtime: Runtime,
     server_connection: Option<ServerConnection>,
-    recv_message_map: Arc<DashMap<&'static str, Vec<Box<dyn NetworkMessage>>>>,
+    recv_message_map: Arc<DashMap<&'static str, Vec<Vec<u8>>>>,
     network_events: AsyncChannel<ClientNetworkEvent>,
     connection_events: AsyncChannel<NCP::Socket>,
     connection_task: Option<JoinHandle<()>>,
@@ -152,7 +152,7 @@ impl<NCP: NetworkClientProvider> NetworkClient<NCP> {
 
         let packet = NetworkPacket {
             kind: String::from(T::NAME),
-            data: Box::new(message),
+            data: bincode::serialize(&message).unwrap(),
         };
 
         match server_connection.send_message.send(packet) {
@@ -219,11 +219,11 @@ fn register_client_message<T, NCP: NetworkClientProvider>(
     events.send_batch(
         messages
             .drain(..)
-            .flat_map(|msg| msg.downcast())
+            .filter_map(|msg| bincode::deserialize::<T>(&msg).ok())
             .map(|msg| {
-                NetworkData::new(
+                NetworkData::<T>::new(
                     ConnectionId::server(),
-                    *msg,
+                    msg,
                 )
             }),
     );

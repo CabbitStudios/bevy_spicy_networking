@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use bevy_spicy_networking::{ClientMessage, NetworkMessage, ServerMessage};
+use bevy_spicy_networking::{ClientMessage, ServerMessage};
 use bevy_spicy_networking_tokio_tcp::{TokioTcpStreamServerProvider, TokioTcpStreamClientProvider};
 
 /////////////////////////////////////////////////////////////////////
@@ -21,9 +21,6 @@ pub struct UserChatMessage {
     pub message: String,
 }
 
-#[typetag::serde]
-impl NetworkMessage for UserChatMessage {}
-
 impl ServerMessage for UserChatMessage {
     const NAME: &'static str = "example:UserChatMessage";
 }
@@ -33,9 +30,6 @@ pub struct NewChatMessage {
     pub name: String,
     pub message: String,
 }
-
-#[typetag::serde]
-impl NetworkMessage for NewChatMessage {}
 
 impl ClientMessage for NewChatMessage {
     const NAME: &'static str = "example:NewChatMessage";

@@ -1,6 +1,5 @@
-use downcast_rs::DowncastSync;
+use serde::{de::DeserializeOwned, Serialize};
 
-#[typetag::serde(tag = "type")]
 /// Any type that should be sent over the wire has to implement [`NetworkMessage`].
 ///
 /// ## Example
@@ -19,9 +18,6 @@ use downcast_rs::DowncastSync;
 /// ```
 /// You will also have to mark it with either [`ServerMessage`] or [`ClientMessage`] (or both)
 /// to signal which direction this message can be sent.
-pub trait NetworkMessage: DowncastSync {}
-
-downcast_rs::impl_downcast!(sync NetworkMessage);
 
 /**
 A marker trait to signal that this message should be sent *to* a server
@@ -30,7 +26,7 @@ A marker trait to signal that this message should be sent *to* a server
 
 You can implement both [`ServerMessage`] and [`ClientMessage`]
 */
-pub trait ServerMessage: NetworkMessage {
+pub trait ServerMessage: Serialize + DeserializeOwned + Send + Sync + 'static{
     /// A unique name to identify your message, this needs to be unique __across all included crates__
     ///
     /// A good combination is crate name + struct name
@@ -44,7 +40,7 @@ A marker trait to signal that this message should be sent *to* a client
 
 You can implement both [`ClientMessage`] and [`ServerMessage`]
 */
-pub trait ClientMessage: NetworkMessage {
+pub trait ClientMessage: Serialize + DeserializeOwned + Send + Sync + 'static{
     /// A unique name to identify your message, this needs to be unique __across all included crates__
     ///
     /// A good combination is crate name + struct name
