@@ -2,10 +2,11 @@ use bevy::app::ScheduleRunnerSettings;
 use bevy::prelude::*;
 use bevy_spicy_networking::{ConnectionId, NetworkData, NetworkServer, ServerNetworkEvent};
 use std::net::{SocketAddr, IpAddr};
+use std::ops::Deref;
 use std::str::FromStr;
 use std::time::Duration;
 
-use bevy_spicy_networking_tokio_tcp::{TokioTcpStreamServerProvider, NetworkSettings};
+use bevy_spicy_tcp::{TcpServerProvider, NetworkSettings, TcpClientProvider};
 
 mod shared;
 
@@ -16,10 +17,15 @@ fn main() {
     )));
     app.add_plugins(MinimalPlugins);
     app.add_plugin(bevy::log::LogPlugin::default());
+    app.insert_resource(
+        bevy::tasks::TaskPoolBuilder::new()
+            .num_threads(2)
+            .build()
+    );
 
     // Before we can register the potential message types, we
     // need to add the plugin
-    app.add_plugin(bevy_spicy_networking::ServerPlugin::<TokioTcpStreamServerProvider>::default());
+    app.add_plugin(bevy_spicy_networking::ServerPlugin::<TcpServerProvider, bevy::tasks::TaskPool>::default());
 
     // A good way to ensure that you are not forgetting to register
     // any messages is to register them where they are defined!
@@ -35,14 +41,18 @@ fn main() {
 
 // On the server side, you need to setup networking. You do not need to do so at startup, and can start listening
 // at any time.
-fn setup_networking(mut net: ResMut<NetworkServer<TokioTcpStreamServerProvider>>, settings: Res<NetworkSettings>) {
+fn setup_networking(
+    mut net: ResMut<NetworkServer<TcpServerProvider>>,
+    settings: Res<NetworkSettings>,
+    runtime: Res<bevy::tasks::TaskPool>
+) {
     let ip_address = "127.0.0.1".parse().expect("Could not parse ip address");
 
     info!("Address of the server: {}", ip_address);
 
     let socket_address = SocketAddr::new(ip_address, 9999);
 
-    match net.listen(&settings) {
+    match net.listen(runtime.deref(), &settings) {
         Ok(_) => (),
         Err(err) => {
             error!("Could not start listening: {}", err);
@@ -58,7 +68,7 @@ struct Player(ConnectionId);
 
 fn handle_connection_events(
     mut commands: Commands,
-    net: Res<NetworkServer<TokioTcpStreamServerProvider>>,
+    net: Res<NetworkServer<TcpServerProvider>>,
     mut network_events: EventReader<ServerNetworkEvent>,
 ) {
     for event in network_events.iter() {
@@ -78,7 +88,7 @@ fn handle_connection_events(
 // Receiving a new message is as simple as listening for events of `NetworkData<T>`
 fn handle_messages(
     mut new_messages: EventReader<NetworkData<shared::UserChatMessage>>,
-    net: Res<NetworkServer<TokioTcpStreamServerProvider>>,
+    net: Res<NetworkServer<TcpServerProvider>>,
 ) {
     for message in new_messages.iter() {
         let user = message.source();

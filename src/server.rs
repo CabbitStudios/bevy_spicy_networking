@@ -1,50 +1,15 @@
 use std::{net::SocketAddr, sync::Arc, marker::PhantomData};
 
+use async_channel::{Sender, Receiver, unbounded};
 use bevy::{prelude::*, utils::Uuid};
 use dashmap::DashMap;
-use derive_more::Display;
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream, ToSocketAddrs},
-    runtime::Runtime,
-    sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver},
-    task::JoinHandle,
-};
 use async_trait::async_trait;
 
 use crate::{
     error::NetworkError,
     network_message::{ClientMessage, ServerMessage},
-    ConnectionId, NetworkData, NetworkPacket, ServerNetworkEvent, SyncChannel, AsyncChannel,
+    ConnectionId, NetworkData, NetworkPacket, ServerNetworkEvent, SyncChannel, AsyncChannel, Connection, runtime::JoinHandle, Runtime,
 };
-
-/// The servers view of a client.
-pub struct ClientConnection {
-    id: ConnectionId,
-    receive_task: JoinHandle<()>,
-    map_receive_task: JoinHandle<()>,
-    send_task: JoinHandle<()>,
-    send_message: UnboundedSender<NetworkPacket>,
-    //addr: SocketAddr,
-}
-
-impl ClientConnection {
-
-    /// Close the given connection to a client.
-    pub fn stop(self) {
-        self.receive_task.abort();
-        self.send_task.abort();
-    }
-}
-
-impl std::fmt::Debug for ClientConnection {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ClientConnection")
-            .field("id", &self.id)
-            //.field("addr", &self.addr)
-            .finish()
-    }
-}
 
 /// A trait used by [`NetworkServer`] to drive a server, this is responsible
 /// for generating the futures that carryout the underlying server logic.
@@ -64,13 +29,13 @@ pub trait NetworkServerProvider: 'static + Send + Sync{
     type WriteHalf: Send;
     
     /// This will be spawned as a background operation to continuously add new connections.
-    async fn accept_loop(network_settings: Self::NetworkSettings, new_connections: UnboundedSender<Self::Socket>, errors: UnboundedSender<NetworkError>);
+    async fn accept_loop(network_settings: Self::NetworkSettings, new_connections: Sender<Self::Socket>, errors: Sender<NetworkError>);
 
     /// Recieves messages from the client, forwards them to Spicy via a sender.
-    async fn recv_loop(read_half: Self::ReadHalf, messages: UnboundedSender<NetworkPacket>, settings: Self::NetworkSettings);
+    async fn recv_loop(read_half: Self::ReadHalf, messages: Sender<NetworkPacket>, settings: Self::NetworkSettings);
     
     /// Sends messages to the client, receives packages from Spicy via receiver.
-    async fn send_loop(write_half: Self::WriteHalf, messages: UnboundedReceiver<NetworkPacket>, settings: Self::NetworkSettings);
+    async fn send_loop(write_half: Self::WriteHalf, messages: Receiver<NetworkPacket>, settings: Self::NetworkSettings);
 
     /// Split the socket into a read and write half, so that the two actions
     /// can be handled concurrently.
@@ -80,13 +45,12 @@ pub trait NetworkServerProvider: 'static + Send + Sync{
 /// An instance of a [`NetworkServer`] is used to listen for new client connections
 /// using [`NetworkServer::listen`]
 pub struct NetworkServer<NSP: NetworkServerProvider> {
-    runtime: Runtime,
     recv_message_map: Arc<DashMap<&'static str, Vec<(ConnectionId, Vec<u8>)>>>,
-    established_connections: Arc<DashMap<ConnectionId, ClientConnection>>,
+    established_connections: Arc<DashMap<ConnectionId, Connection>>,
     new_connections: AsyncChannel<NSP::Socket>,
     disconnected_connections: AsyncChannel<ConnectionId>,
     error_channel: AsyncChannel<NetworkError>,
-    server_handle: Option<JoinHandle<()>>,
+    server_handle: Option<Box<dyn JoinHandle>>,
     provider: PhantomData<NSP>,
 }
 
@@ -103,10 +67,6 @@ impl<NSP: NetworkServerProvider> std::fmt::Debug for NetworkServer<NSP> {
 impl<NSP: NetworkServerProvider> NetworkServer<NSP> {
     pub(crate) fn new(provider: NSP) -> Self {
         Self {
-            runtime: tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .expect("Could not build tokio runtime"),
             recv_message_map: Arc::new(DashMap::new()),
             established_connections: Arc::new(DashMap::new()),
             new_connections: AsyncChannel::new(),
@@ -121,8 +81,9 @@ impl<NSP: NetworkServerProvider> NetworkServer<NSP> {
     ///
     /// ## Note
     /// If you are already listening for new connections, then this will disconnect existing connections first
-    pub fn listen(
+    pub fn listen<RT: Runtime>(
         &mut self,
+        runtime: &RT,
         network_settings: &NSP::NetworkSettings,
     ) -> Result<(), NetworkError> {
         self.stop();
@@ -135,7 +96,7 @@ impl<NSP: NetworkServerProvider> NetworkServer<NSP> {
 
         trace!("Started listening");
 
-        self.server_handle = Some(self.runtime.spawn(listen_loop));
+        self.server_handle = Some(Box::new(runtime.spawn(listen_loop)));
 
         Ok(())
     }
@@ -156,7 +117,7 @@ impl<NSP: NetworkServerProvider> NetworkServer<NSP> {
             data: bincode::serialize(&message).unwrap(),
         };
 
-        match connection.send_message.send(packet) {
+        match connection.send_message.try_send(packet) {
             Ok(_) => (),
             Err(err) => {
                 error!("There was an error sending a packet: {}", err);
@@ -176,7 +137,7 @@ impl<NSP: NetworkServerProvider> NetworkServer<NSP> {
                 data: serialized_message,
             };
 
-            match connection.send_message.send(packet) {
+            match connection.send_message.try_send(packet) {
                 Ok(_) => (),
                 Err(err) => {
                     warn!("Could not send to client because: {}", err);
@@ -190,7 +151,7 @@ impl<NSP: NetworkServerProvider> NetworkServer<NSP> {
     /// ## Notes
     /// This operation is idempotent and will do nothing if you are not actively listening
     pub fn stop(&mut self) {
-        if let Some(conn) = self.server_handle.take() {
+        if let Some(mut conn) = self.server_handle.take() {
             conn.abort();
             for conn in self.established_connections.iter() {
                 let _ = self.disconnected_connections.sender.send(*conn.key());
@@ -216,8 +177,9 @@ impl<NSP: NetworkServerProvider> NetworkServer<NSP> {
     }
 }
 
-pub(crate) fn handle_new_incoming_connections<NSP: NetworkServerProvider>(
+pub(crate) fn handle_new_incoming_connections<NSP: NetworkServerProvider, RT: Runtime>(
     mut server: ResMut<NetworkServer<NSP>>,
+    runtime: Res<RT>,
     network_settings: Res<NSP::NetworkSettings>,
     mut network_events: EventWriter<ServerNetworkEvent>,
 ) {
@@ -233,26 +195,25 @@ pub(crate) fn handle_new_incoming_connections<NSP: NetworkServerProvider>(
             let write_network_settings = network_settings.clone();
             let disconnected_connections = server.disconnected_connections.sender.clone();
 
-            let (outgoing_tx, outgoing_rx) = unbounded_channel();
-            let (incoming_tx, mut incoming_rx) = unbounded_channel();
+            let (outgoing_tx, outgoing_rx) = unbounded();
+            let (incoming_tx, mut incoming_rx) = unbounded();
 
             server.established_connections.insert(
                 conn_id,
-                ClientConnection {
-                    id: conn_id,
-                    receive_task: server.runtime.spawn(async move {
+                Connection {
+                    receive_task: Box::new(runtime.spawn(async move {
                         trace!("Starting listen task for {}", conn_id);
                         NSP::recv_loop(read_half, incoming_tx, read_network_settings).await;
 
-                        match disconnected_connections.send(conn_id) {
+                        match disconnected_connections.send(conn_id).await {
                             Ok(_) => (),
                             Err(_) => {
                                 error!("Could not send disconnected event, because channel is disconnected");
                             }
                         }
-                    }),
-                    map_receive_task: server.runtime.spawn(async move{
-                        while let Some(packet) = incoming_rx.recv().await{
+                    })),
+                    map_receive_task: Box::new(runtime.spawn(async move{
+                        while let Ok(packet) = incoming_rx.recv().await{
                             match recv_message_map.get_mut(&packet.kind[..]) {
                                 Some(mut packets) => packets.push((conn_id, packet.data)),
                                 None => {
@@ -260,11 +221,11 @@ pub(crate) fn handle_new_incoming_connections<NSP: NetworkServerProvider>(
                                 }
                             }
                         }
-                    }),
-                    send_task: server.runtime.spawn(async move {
+                    })),
+                    send_task: Box::new(runtime.spawn(async move {
                         trace!("Starting send task for {}", conn_id);
                         NSP::send_loop(write_half, outgoing_rx, write_network_settings).await;
-                    }),
+                    })),
                     send_message: outgoing_tx,
                     //addr: new_conn.addr,
                 },
@@ -314,6 +275,7 @@ impl AppNetworkServerMessage for App {
 fn register_server_message<T, NSP: NetworkServerProvider>(
     net_res: ResMut<NetworkServer<NSP>>,
     mut events: EventWriter<NetworkData<T>>,
+
 ) where
     T: ServerMessage,
 {

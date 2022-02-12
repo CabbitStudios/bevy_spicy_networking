@@ -151,18 +151,22 @@ mod network_message;
 /// Contains all functionality for starting a server, sending, and recieving messages from clients.
 pub mod server;
 
+mod runtime;
+use runtime::JoinHandle;
+pub use runtime::Runtime;
+
 use std::{net::{IpAddr, Ipv4Addr, SocketAddr}, marker::PhantomData, fmt::Debug};
 
+use async_channel::{Sender, Receiver, unbounded};
 use bevy::{prelude::*, utils::Uuid};
 pub use client::{AppNetworkClientMessage, NetworkClient, NetworkClientProvider};
-use crossbeam_channel::{unbounded, Receiver, Sender};
 use derive_more::{Deref, Display};
 use error::NetworkError;
 pub use network_message::{ClientMessage, ServerMessage};
 use serde::{Deserialize, Serialize};
 pub use server::{AppNetworkServerMessage, NetworkServer, NetworkServerProvider};
 pub use async_trait::async_trait;
-use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver, unbounded_channel};
+pub use async_channel;
 
 struct SyncChannel<T> {
     pub(crate) sender: Sender<T>,
@@ -178,13 +182,13 @@ impl<T> SyncChannel<T> {
 }
 
 struct AsyncChannel<T> {
-    pub(crate) sender: UnboundedSender<T>,
-    pub(crate) receiver: UnboundedReceiver<T>,
+    pub(crate) sender: Sender<T>,
+    pub(crate) receiver: Receiver<T>,
 }
 
 impl<T> AsyncChannel<T> {
     fn new() -> Self {
-        let (sender, receiver) = unbounded_channel();
+        let (sender, receiver) = unbounded();
 
         Self { sender, receiver }
     }
@@ -287,18 +291,33 @@ impl<T> NetworkData<T> {
     }
 }
 
+#[derive(Display)]
+#[display(fmt = "Server connection")]
+struct Connection {
+    receive_task: Box<dyn JoinHandle>,
+    map_receive_task: Box<dyn JoinHandle>,
+    send_task: Box<dyn JoinHandle>,
+    send_message: Sender<NetworkPacket>,
+}
+
+impl Connection {
+    fn stop(mut self) {
+        self.receive_task.abort();
+        self.send_task.abort();
+    }
+}
 #[derive(Default, Copy, Clone, Debug)]
 /// The plugin to add to your bevy [`App`](bevy::prelude::App) when you want
 /// to instantiate a server
-pub struct ServerPlugin<NSP: NetworkServerProvider>(NSP);
+pub struct ServerPlugin<NSP: NetworkServerProvider, RT: Runtime>(PhantomData<(NSP, RT)>);
 
-impl<NSP: NetworkServerProvider + Default> Plugin for ServerPlugin<NSP> {
+impl<NSP: NetworkServerProvider + Default, RT: Runtime> Plugin for ServerPlugin<NSP, RT> {
     fn build(&self, app: &mut App) {
         app.insert_resource(server::NetworkServer::new(NSP::default()));
         app.add_event::<ServerNetworkEvent>();
         app.add_system_to_stage(
             CoreStage::PreUpdate,
-            server::handle_new_incoming_connections::<NSP>,
+            server::handle_new_incoming_connections::<NSP, RT>,
         );
     }
 }
@@ -306,19 +325,19 @@ impl<NSP: NetworkServerProvider + Default> Plugin for ServerPlugin<NSP> {
 #[derive(Default, Copy, Clone, Debug)]
 /// The plugin to add to your bevy [`App`](bevy::prelude::App) when you want
 /// to instantiate a client
-pub struct ClientPlugin<NCP: NetworkClientProvider>(NCP);
+pub struct ClientPlugin<NCP: NetworkClientProvider, RT: Runtime>(PhantomData<(NCP, RT)>);
 
-impl<NCP: NetworkClientProvider + Default> Plugin for ClientPlugin<NCP> {
+impl<NCP: NetworkClientProvider + Default, RT: Runtime> Plugin for ClientPlugin<NCP, RT> {
     fn build(&self, app: &mut App) {
         app.insert_resource(client::NetworkClient::new(NCP::default()));
         app.add_event::<ClientNetworkEvent>();
         app.add_system_to_stage(
             CoreStage::PreUpdate,
-            client::send_client_network_events::<NCP>,
+            client::send_client_network_events::<NCP, RT>,
         );
         app.add_system_to_stage(
             CoreStage::PreUpdate,
-            client::handle_connection_event::<NCP>,
+            client::handle_connection_event::<NCP, RT>,
         );
     }
 }

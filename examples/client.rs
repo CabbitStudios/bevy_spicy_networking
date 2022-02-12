@@ -2,9 +2,9 @@
 
 use bevy::prelude::*;
 use bevy_spicy_networking::{ClientNetworkEvent, NetworkClient, NetworkData};
-use std::{net::{SocketAddr, IpAddr}, str::FromStr};
+use std::{net::{SocketAddr, IpAddr}, str::FromStr, ops::Deref};
 
-use bevy_spicy_networking_tokio_tcp::{TokioTcpStreamClientProvider, NetworkSettings};
+use bevy_spicy_tcp::{TcpClientProvider, NetworkSettings};
 
 mod shared;
 
@@ -15,7 +15,13 @@ fn main() {
 
     // You need to add the `ClientPlugin` first before you can register
     // `ClientMessage`s
-    app.add_plugin(bevy_spicy_networking::ClientPlugin::<TokioTcpStreamClientProvider>::default());
+    app.add_plugin(bevy_spicy_networking::ClientPlugin::<TcpClientProvider, bevy::tasks::TaskPool>::default());
+    
+    app.insert_resource(
+        bevy::tasks::TaskPoolBuilder::new()
+            .num_threads(2)
+            .build()
+    );
 
     // A good way to ensure that you are not forgetting to register
     // any messages is to register them where they are defined!
@@ -193,7 +199,7 @@ type GameChatMessages = ChatMessages<ChatMessage>;
 struct ConnectButton;
 
 fn handle_connect_button(
-    mut net: ResMut<NetworkClient<TokioTcpStreamClientProvider>>,
+    mut net: ResMut<NetworkClient<TcpClientProvider>>,
     settings: Res<NetworkSettings>,
     interaction_query: Query<
         (&Interaction, &Children),
@@ -201,6 +207,7 @@ fn handle_connect_button(
     >,
     mut text_query: Query<&mut Text>,
     mut messages: Query<&mut GameChatMessages>,
+    task_pool: Res<bevy::tasks::TaskPool>
 ) {
     let mut messages = if let Ok(messages) = messages.get_single_mut() {
         messages
@@ -218,6 +225,7 @@ fn handle_connect_button(
                 messages.add(SystemMessage::new("Connecting to server..."));
 
                 net.connect(
+                    task_pool.deref(),
                     &settings
                 );
             }
@@ -229,7 +237,7 @@ fn handle_connect_button(
 struct MessageButton;
 
 fn handle_message_button(
-    net: Res<NetworkClient<TokioTcpStreamClientProvider>>,
+    net: Res<NetworkClient<TcpClientProvider>>,
     interaction_query: Query<&Interaction, (Changed<Interaction>, With<MessageButton>)>,
     mut messages: Query<&mut GameChatMessages>,
 ) {

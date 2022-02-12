@@ -1,21 +1,15 @@
 use std::{net::SocketAddr, sync::Arc, marker::PhantomData};
 
+use async_channel::{Sender, Receiver, unbounded};
 use bevy::prelude::*;
 use dashmap::DashMap;
 use derive_more::Display;
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpStream, ToSocketAddrs},
-    runtime::Runtime,
-    sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver},
-    task::JoinHandle,
-};
 use async_trait::async_trait;
 
 use crate::{
     error::NetworkError,
     network_message::{ClientMessage, ServerMessage},
-    ClientNetworkEvent, ConnectionId, NetworkData, NetworkPacket, SyncChannel, AsyncChannel,
+    ClientNetworkEvent, ConnectionId, NetworkData, NetworkPacket, SyncChannel, AsyncChannel, Runtime, Connection, runtime::JoinHandle,
 };
 
 /// A trait used by [`NetworkClient`] to drive a client, this is responsible
@@ -36,13 +30,13 @@ pub trait NetworkClientProvider: 'static + Send + Sync{
     type WriteHalf: Send;
 
     /// Connect to the server, this will technically live as a long running task, but it can complete.
-    async fn connect_task(network_settings: Self::NetworkSettings, new_connections: UnboundedSender<Self::Socket>, errors: UnboundedSender<ClientNetworkEvent>);
+    async fn connect_task(network_settings: Self::NetworkSettings, new_connections: Sender<Self::Socket>, errors: Sender<ClientNetworkEvent>);
 
     /// Recieves messages from the server.
-    async fn recv_loop(read_half: Self::ReadHalf, messages: UnboundedSender<NetworkPacket>, settings: Self::NetworkSettings);
+    async fn recv_loop(read_half: Self::ReadHalf, messages: Sender<NetworkPacket>, settings: Self::NetworkSettings);
     
     /// Writes messages to the server.
-    async fn send_loop(write_half: Self::WriteHalf, messages: UnboundedReceiver<NetworkPacket>, settings: Self::NetworkSettings);
+    async fn send_loop(write_half: Self::WriteHalf, messages: Receiver<NetworkPacket>, settings: Self::NetworkSettings);
 
     /// Split the socket into a read and write half, so that the two actions
     /// can be handled concurrently.
@@ -50,31 +44,14 @@ pub trait NetworkClientProvider: 'static + Send + Sync{
 }
 
 
-#[derive(Display)]
-#[display(fmt = "Server connection")]
-struct ServerConnection {
-    receive_task: JoinHandle<()>,
-    map_receive_task: JoinHandle<()>,
-    send_task: JoinHandle<()>,
-    send_message: UnboundedSender<NetworkPacket>,
-}
-
-impl ServerConnection {
-    fn stop(self) {
-        self.receive_task.abort();
-        self.send_task.abort();
-    }
-}
-
 /// An instance of a [`NetworkClient`] is used to connect to a remote server
 /// using [`NetworkClient::connect`]
 pub struct NetworkClient<NCP: NetworkClientProvider> {
-    runtime: Runtime,
-    server_connection: Option<ServerConnection>,
+    server_connection: Option<Connection>,
     recv_message_map: Arc<DashMap<&'static str, Vec<Vec<u8>>>>,
     network_events: AsyncChannel<ClientNetworkEvent>,
     connection_events: AsyncChannel<NCP::Socket>,
-    connection_task: Option<JoinHandle<()>>,
+    connection_task: Option<Box<dyn JoinHandle>>,
     provider: PhantomData<NCP>,
 }
 
@@ -93,25 +70,22 @@ impl<NCP: NetworkClientProvider> std::fmt::Debug for NetworkClient<NCP> {
 impl<NCP: NetworkClientProvider> NetworkClient<NCP> {
     pub(crate) fn new(provider: NCP) -> Self {
         Self {
-            runtime: tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .expect("Could not build tokio runtime"),
             server_connection: None,
             recv_message_map: Arc::new(DashMap::new()),
             network_events: AsyncChannel::new(),
             connection_events: AsyncChannel::new(),
             connection_task: None,
-            provider
+            provider: PhantomData
         }
     }
 
-    /// Connect to a remote server
-    ///
+    /// Start async connecting to a remote server.
+    /// 
     /// ## Note
     /// This will disconnect you first from any existing server connections
-    pub fn connect<'a>(
+    pub fn connect<'a, RT: Runtime>(
         &mut self,
+        runtime: &RT,
         connect_info: &NCP::NetworkSettings,
     ) {
         debug!("Starting connection");
@@ -122,7 +96,7 @@ impl<NCP: NetworkClientProvider> NetworkClient<NCP> {
         let connection_event_sender = self.connection_events.sender.clone();
 
         self.connection_task = Some(
-            self.runtime.spawn(NCP::connect_task(connect_info.clone(), connection_event_sender, network_error_sender))
+            Box::new(runtime.spawn(NCP::connect_task(connect_info.clone(), connection_event_sender, network_error_sender)))
         );
     }
 
@@ -155,7 +129,7 @@ impl<NCP: NetworkClientProvider> NetworkClient<NCP> {
             data: bincode::serialize(&message).unwrap(),
         };
 
-        match server_connection.send_message.send(packet) {
+        match server_connection.send_message.try_send(packet) {
             Ok(_) => (),
             Err(err) => {
                 error!("Server disconnected: {}", err);
@@ -230,9 +204,10 @@ fn register_client_message<T, NCP: NetworkClientProvider>(
 }
 
 /// Pushes messages into the network event queue.
-pub fn handle_connection_event<NCP: NetworkClientProvider>(
+pub fn handle_connection_event<NCP: NetworkClientProvider, RT: Runtime>(
     mut net_res: ResMut<NetworkClient<NCP>>,
     mut events: EventWriter<ClientNetworkEvent>,
+    runtime: Res<RT>,
     network_settings: Res<NCP::NetworkSettings>
 ) {
     let connection =
@@ -245,30 +220,30 @@ pub fn handle_connection_event<NCP: NetworkClientProvider>(
 
     let (read_half, write_half) = NCP::split(connection);
     let recv_message_map = net_res.recv_message_map.clone();
-    let (outgoing_tx, outgoing_rx) = unbounded_channel();
-    let (incoming_tx, mut incoming_rx) = unbounded_channel();
+    let (outgoing_tx, outgoing_rx) = unbounded();
+    let (incoming_tx, mut incoming_rx) = unbounded();
     let network_event_sender = net_res.network_events.sender.clone();
     let read_network_settings = network_settings.clone();
     let write_network_settings = network_settings.clone();
 
-    net_res.server_connection = Some(ServerConnection {
-        send_task: net_res.runtime.spawn(async move {
+    net_res.server_connection = Some(Connection {
+        send_task: Box::new(runtime.spawn(async move {
             trace!("Starting send task");
             NCP::send_loop(write_half, outgoing_rx, write_network_settings).await;
-        }),
-        receive_task: net_res.runtime.spawn(async move {
+        })),
+        receive_task: Box::new(runtime.spawn(async move {
             trace!("Starting listen task");
             NCP::recv_loop(read_half, incoming_tx, read_network_settings).await;
 
-            match network_event_sender.send(ClientNetworkEvent::Disconnected) {
+            match network_event_sender.send(ClientNetworkEvent::Disconnected).await {
                 Ok(_) => (),
                 Err(_) => {
                     error!("Could not send disconnected event, because channel is disconnected");
                 }
             }
-        }),
-        map_receive_task: net_res.runtime.spawn(async move{
-            while let Some(packet) = incoming_rx.recv().await{
+        })),
+        map_receive_task: Box::new(runtime.spawn(async move{
+            while let Ok(packet) = incoming_rx.recv().await{
                 match recv_message_map.get_mut(&packet.kind[..]) {
                     Some(mut packets) => packets.push(packet.data),
                     None => {
@@ -276,7 +251,7 @@ pub fn handle_connection_event<NCP: NetworkClientProvider>(
                     }
                 }
             }
-        }),
+        })),
         send_message: outgoing_tx,
     });
 
@@ -284,7 +259,7 @@ pub fn handle_connection_event<NCP: NetworkClientProvider>(
 }
 
 /// Takes events and forwards them to the server.
-pub fn send_client_network_events<NCP: NetworkClientProvider>(
+pub fn send_client_network_events<NCP: NetworkClientProvider, RT: Runtime>(
     mut client_server: ResMut<NetworkClient<NCP>>,
     mut client_network_events: EventWriter<ClientNetworkEvent>,
 ) {
