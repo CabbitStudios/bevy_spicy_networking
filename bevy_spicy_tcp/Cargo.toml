@@ -8,5 +8,6 @@ edition = "2021"
 [dependencies]
 bevy = { version = "*", features = [], default-features = false }
 bevy_spicy_networking = {path = "../"}
-async-std = "1.10.0"
+async-net = "1.6.1"
+futures-lite = "1.12.0"
 bincode = "*"

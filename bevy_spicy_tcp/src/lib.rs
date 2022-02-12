@@ -2,7 +2,8 @@ use std::net::SocketAddr;
 
 use bevy::prelude::{error, trace, debug, info};
 use bevy_spicy_networking::{async_trait, server::NetworkServerProvider, client::NetworkClientProvider, NetworkPacket, ClientNetworkEvent, error::NetworkError, async_channel::{Sender, Receiver, unbounded}};
-use mio::{net::{TcpStream, TcpListener}, io::{BufReader, BufWriter, WriteExt, ReadExt}};
+use async_net::{TcpStream, TcpListener};
+use futures_lite::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 #[derive(Default)]
 pub struct TcpServerProvider;
@@ -58,7 +59,7 @@ impl NetworkServerProvider for TcpServerProvider{
     }
 
     async fn recv_loop(mut read_half: Self::ReadHalf, messages: Sender<NetworkPacket>, settings: Self::NetworkSettings){
-        let mut buffer: Vec<u8> = (0..settings.max_packet_length).map(|_| 0).collect();
+        let mut buffer = vec![0; settings.max_packet_length];
         loop {
             info!("Reading message length");
             let length = match read_half.read_exact(&mut buffer[..8]).await {
@@ -153,7 +154,7 @@ impl NetworkServerProvider for TcpServerProvider{
     
 
     fn split(combined: Self::Socket) -> (Self::ReadHalf, Self::WriteHalf){
-        (BufReader::new(combined.clone()), BufWriter::new(combined))
+        (combined.clone(), combined)
     }
 }
 
@@ -170,9 +171,9 @@ impl NetworkClientProvider for TcpClientProvider{
 
     type Socket = TcpStream;
 
-    type ReadHalf = BufReader<TcpStream>;
+    type ReadHalf = TcpStream;
 
-    type WriteHalf = BufWriter<TcpStream>;
+    type WriteHalf = TcpStream;
 
     async fn connect_task(network_settings: Self::NetworkSettings, new_connections: Sender<Self::Socket>, errors: Sender<ClientNetworkEvent>){
         info!("Beginning connection");
@@ -209,7 +210,7 @@ impl NetworkClientProvider for TcpClientProvider{
     }
 
     async fn recv_loop(mut read_half: Self::ReadHalf, messages: Sender<NetworkPacket>, settings: Self::NetworkSettings){
-        let mut buffer: Vec<u8> = (0..settings.max_packet_length).map(|_| 0).collect();
+        let mut buffer = vec![0; settings.max_packet_length];
         loop {
             info!("Reading message length");
             let length = match read_half.read_exact(&mut buffer[..8]).await {
@@ -305,7 +306,7 @@ impl NetworkClientProvider for TcpClientProvider{
     }
 
     fn split(combined: Self::Socket) -> (Self::ReadHalf, Self::WriteHalf){
-        (BufReader::new(combined.clone()), BufWriter::new(combined))
+        (combined.clone(), combined)
     }
 }
 
