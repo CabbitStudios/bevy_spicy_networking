@@ -630,7 +630,6 @@ dependencies = [
  "bincode",
  "dashmap",
  "derive_more",
- "erased-serde",
  "serde",
  "thiserror",
 ]
