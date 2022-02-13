@@ -1,7 +1,8 @@
 use bevy::prelude::*;
+use bevy_spicy_tcp::{TcpClientProvider, TcpServerProvider};
 use serde::{Deserialize, Serialize};
 
-use bevy_spicy_networking::{ClientMessage, NetworkMessage, ServerMessage};
+use bevy_spicy_networking::{ClientMessage, ServerMessage};
 
 /////////////////////////////////////////////////////////////////////
 // In this example the client sends `UserChatMessage`s to the server,
@@ -20,9 +21,6 @@ pub struct UserChatMessage {
     pub message: String,
 }
 
-#[typetag::serde]
-impl NetworkMessage for UserChatMessage {}
-
 impl ServerMessage for UserChatMessage {
     const NAME: &'static str = "example:UserChatMessage";
 }
@@ -33,27 +31,24 @@ pub struct NewChatMessage {
     pub message: String,
 }
 
-#[typetag::serde]
-impl NetworkMessage for NewChatMessage {}
-
 impl ClientMessage for NewChatMessage {
     const NAME: &'static str = "example:NewChatMessage";
 }
 
 #[allow(unused)]
-pub fn client_register_network_messages(app: &mut AppBuilder) {
+pub fn client_register_network_messages(app: &mut App) {
     use bevy_spicy_networking::AppNetworkClientMessage;
 
     // The client registers messages that arrives from the server, so that
     // it is prepared to handle them. Otherwise, an error occurs.
-    app.listen_for_client_message::<NewChatMessage>();
+    app.listen_for_client_message::<NewChatMessage, TcpClientProvider>();
 }
 
 #[allow(unused)]
-pub fn server_register_network_messages(app: &mut AppBuilder) {
+pub fn server_register_network_messages(app: &mut App) {
     use bevy_spicy_networking::AppNetworkServerMessage;
 
     // The server registers messages that arrives from a client, so that
     // it is prepared to handle them. Otherwise, an error occurs.
-    app.listen_for_server_message::<UserChatMessage>();
+    app.listen_for_server_message::<UserChatMessage, TcpServerProvider>();
 }
