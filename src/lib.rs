@@ -292,13 +292,13 @@ impl Default for NetworkSettings {
 pub struct ServerPlugin;
 
 impl Plugin for ServerPlugin {
-    fn build(&self, app: &mut AppBuilder) {
+    fn build(&self, app: &mut App) {
         app.insert_resource(server::NetworkServer::new());
         app.add_event::<ServerNetworkEvent>();
         app.init_resource::<NetworkSettings>();
         app.add_system_to_stage(
             CoreStage::PreUpdate,
-            server::handle_new_incoming_connections.system(),
+            server::handle_new_incoming_connections,
         );
     }
 }
@@ -309,17 +309,17 @@ impl Plugin for ServerPlugin {
 pub struct ClientPlugin;
 
 impl Plugin for ClientPlugin {
-    fn build(&self, app: &mut AppBuilder) {
+    fn build(&self, app: &mut App) {
         app.insert_resource(client::NetworkClient::new());
         app.add_event::<ClientNetworkEvent>();
         app.init_resource::<NetworkSettings>();
         app.add_system_to_stage(
             CoreStage::PreUpdate,
-            client::send_client_network_events.system(),
+            client::send_client_network_events,
         );
         app.add_system_to_stage(
             CoreStage::PreUpdate,
-            client::handle_connection_event.system(),
+            client::handle_connection_event,
         );
     }
 }

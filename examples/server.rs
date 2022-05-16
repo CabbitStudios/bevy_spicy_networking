@@ -7,7 +7,7 @@ use std::time::Duration;
 mod shared;
 
 fn main() {
-    let mut app = App::build();
+    let mut app = App::new();
     app.insert_resource(ScheduleRunnerSettings::run_loop(Duration::from_secs_f64(
         1.0 / 60.0,
     )));
@@ -22,9 +22,9 @@ fn main() {
     // any messages is to register them where they are defined!
     shared::server_register_network_messages(&mut app);
 
-    app.add_startup_system(setup_networking.system());
-    app.add_system(handle_connection_events.system());
-    app.add_system(handle_messages.system());
+    app.add_startup_system(setup_networking);
+    app.add_system(handle_connection_events);
+    app.add_system(handle_messages);
 
     app.run();
 }
@@ -49,6 +49,7 @@ fn setup_networking(mut net: ResMut<NetworkServer>) {
     info!("Started listening for new connections!");
 }
 
+#[derive(Component)]
 struct Player(ConnectionId);
 
 fn handle_connection_events(

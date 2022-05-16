@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 mod shared;
 
 fn main() {
-    let mut app = App::build();
+    let mut app = App::new();
 
     app.add_plugins(DefaultPlugins);
 
@@ -18,16 +18,16 @@ fn main() {
     // any messages is to register them where they are defined!
     shared::client_register_network_messages(&mut app);
 
-    app.add_startup_system(setup_ui.system());
+    app.add_startup_system(setup_ui);
 
-    app.add_system(handle_connect_button.system());
-    app.add_system(handle_message_button.system());
-    app.add_system(handle_incoming_messages.system());
-    app.add_system(handle_network_events.system());
+    app.add_system(handle_connect_button);
+    app.add_system(handle_message_button);
+    app.add_system(handle_incoming_messages);
+    app.add_system(handle_network_events);
 
     app.init_resource::<GlobalChatSettings>();
 
-    app.add_system_to_stage(CoreStage::PostUpdate, handle_chat_area.system());
+    app.add_system_to_stage(CoreStage::PostUpdate, handle_chat_area);
 
     app.run();
 }
@@ -40,7 +40,7 @@ fn handle_incoming_messages(
     mut messages: Query<&mut GameChatMessages>,
     mut new_messages: EventReader<NetworkData<shared::NewChatMessage>>,
 ) {
-    let mut messages = messages.single_mut().unwrap();
+    let mut messages = messages.single_mut();
 
     for new_message in new_messages.iter() {
         messages.add(UserMessage::new(&new_message.name, &new_message.message));
@@ -53,9 +53,9 @@ fn handle_network_events(
     mut text_query: Query<&mut Text>,
     mut messages: Query<&mut GameChatMessages>,
 ) {
-    let connect_children = connect_query.single().unwrap();
+    let connect_children = connect_query.single();
     let mut text = text_query.get_mut(connect_children[0]).unwrap();
-    let mut messages = messages.single_mut().unwrap();
+    let mut messages = messages.single_mut();
 
     for event in new_network_events.iter() {
         info!("Received event: {:?}", event);
@@ -161,6 +161,7 @@ impl UserMessage {
     }
 }
 
+#[derive(Component)]
 struct ChatMessages<T> {
     messages: Vec<T>,
 }
@@ -182,6 +183,7 @@ type GameChatMessages = ChatMessages<ChatMessage>;
 ////////////// UI Definitions/Handlers ////////////////////////
 ///////////////////////////////////////////////////////////////
 
+#[derive(Component)]
 struct ConnectButton;
 
 fn handle_connect_button(
@@ -193,7 +195,7 @@ fn handle_connect_button(
     mut text_query: Query<&mut Text>,
     mut messages: Query<&mut GameChatMessages>,
 ) {
-    let mut messages = messages.single_mut().unwrap();
+    let mut messages = messages.single_mut();
 
     for (interaction, children) in interaction_query.iter() {
         let mut text = text_query.get_mut(children[0]).unwrap();
@@ -221,6 +223,7 @@ fn handle_connect_button(
     }
 }
 
+#[derive(Component)]
 struct MessageButton;
 
 fn handle_message_button(
@@ -228,7 +231,7 @@ fn handle_message_button(
     interaction_query: Query<&Interaction, (Changed<Interaction>, With<MessageButton>)>,
     mut messages: Query<&mut GameChatMessages>,
 ) {
-    let mut messages = messages.single_mut().unwrap();
+    let mut messages = messages.single_mut();
 
     for interaction in interaction_query.iter() {
         if let Interaction::Clicked = interaction {
@@ -245,6 +248,7 @@ fn handle_message_button(
     }
 }
 
+#[derive(Component)]
 struct ChatArea;
 
 fn handle_chat_area(
@@ -252,7 +256,7 @@ fn handle_chat_area(
     messages: Query<&GameChatMessages, Changed<GameChatMessages>>,
     mut chat_text_query: Query<&mut Text, With<ChatArea>>,
 ) {
-    let messages = if let Ok(messages) = messages.single() {
+    let messages = if let Ok(messages) = messages.get_single() {
         messages
     } else {
         return;
@@ -275,7 +279,7 @@ fn handle_chat_area(
         })
         .collect::<Vec<_>>();
 
-    let mut text = chat_text_query.single_mut().unwrap();
+    let mut text = chat_text_query.single_mut();
 
     text.sections = sections;
 }
@@ -283,7 +287,6 @@ fn handle_chat_area(
 fn setup_ui(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
     commands.spawn_bundle(UiCameraBundle::default());
 
@@ -297,7 +300,7 @@ fn setup_ui(
                 flex_direction: FlexDirection::ColumnReverse,
                 ..Default::default()
             },
-            material: materials.add(Color::NONE.into()),
+            color: UiColor::from(Color::NONE),
             ..Default::default()
         })
         .with_children(|parent| {
@@ -322,7 +325,7 @@ fn setup_ui(
                         size: Size::new(Val::Percent(100.), Val::Percent(10.)),
                         ..Default::default()
                     },
-                    material: materials.add(Color::GRAY.into()),
+                    color: UiColor::from(Color::GRAY),
                     ..Default::default()
                 })
                 .with_children(|parent_button_bar| {
