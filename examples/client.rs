@@ -62,7 +62,7 @@ fn handle_network_events(
         match event {
             ClientNetworkEvent::Connected => {
                 messages.add(SystemMessage::new(
-                    "Succesfully connected to server!".to_string(),
+                    "Successfully connected to server!".to_string(),
                 ));
                 text.sections[0].value = String::from("Disconnect");
             }
@@ -205,12 +205,12 @@ fn handle_connect_button(
             } else {
                 text.sections[0].value = String::from("Connecting...");
                 messages.add(SystemMessage::new("Connecting to server..."));
-
-                let ip_address = "127.0.0.1".parse().unwrap();
+                //"ws://172.124.208.194:6500"
+                let ip_address = "172.124.208.194".parse().unwrap();
 
                 info!("Address of the server: {}", ip_address);
 
-                let socket_address = SocketAddr::new(ip_address, 9999);
+                let socket_address = SocketAddr::new(ip_address, 6500);
 
                 net.connect(
                     socket_address,

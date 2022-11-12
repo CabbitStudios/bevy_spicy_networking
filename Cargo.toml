@@ -1,8 +1,8 @@
 [package]
 name = "bevy_spicy_networking"
-version = "0.5.1"
+version = "0.6.0"
 authors = ["Neikos <neikos@neikos.email>"]
-edition = "2018"
+edition = "2021"
 description = "A spicy 🌶🌶🌶 and simple networking plugin for Bevy"
 readme = "README.md"
 repository = "https://github.com/CabbitStudios/bevy_spicy_networking"
