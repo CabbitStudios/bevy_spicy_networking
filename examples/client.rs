@@ -205,12 +205,11 @@ fn handle_connect_button(
             } else {
                 text.sections[0].value = String::from("Connecting...");
                 messages.add(SystemMessage::new("Connecting to server..."));
-                //"ws://172.124.208.194:6500"
-                let ip_address = "172.124.208.194".parse().unwrap();
+                let ip_address = "127.0.0.1".parse().unwrap();
 
                 info!("Address of the server: {}", ip_address);
 
-                let socket_address = SocketAddr::new(ip_address, 6500);
+                let socket_address = SocketAddr::new(ip_address, 9999);
 
                 net.connect(
                     socket_address,
