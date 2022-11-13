@@ -35,6 +35,7 @@ impl ServerConnection {
 
 /// An instance of a [`NetworkClient`] is used to connect to a remote server
 /// using [`NetworkClient::connect`]
+#[derive(Resource)]
 pub struct NetworkClient {
     runtime: Runtime,
     server_connection: Option<ServerConnection>,

@@ -50,6 +50,7 @@ impl std::fmt::Debug for ClientConnection {
 
 /// An instance of a [`NetworkServer`] is used to listen for new client connections
 /// using [`NetworkServer::listen`]
+#[derive(Resource)]
 pub struct NetworkServer {
     runtime: Runtime,
     recv_message_map: Arc<DashMap<&'static str, Vec<(ConnectionId, Box<dyn NetworkMessage>)>>>,

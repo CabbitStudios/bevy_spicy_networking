@@ -2,7 +2,7 @@ use crate::ConnectionId;
 
 #[derive(thiserror::Error, Debug)]
 pub enum NetworkError {
-    #[error("An error occured when accepting a new connnection: {0}")]
+    #[error("An error occured when accepting a new connection: {0}")]
     Accept(std::io::Error),
     #[error("Could not find connection with id: {0}")]
     ConnectionNotFound(ConnectionId),

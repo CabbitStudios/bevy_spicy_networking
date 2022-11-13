@@ -81,7 +81,7 @@ fn handle_network_events(
 ///////////////////////////////////////////////////////////////
 ////////////// Data Definitions ///////////////////////////////
 ///////////////////////////////////////////////////////////////
-
+#[derive(Resource)]
 struct GlobalChatSettings {
     chat_style: TextStyle,
     author_style: TextStyle,
@@ -284,24 +284,23 @@ fn handle_chat_area(
 }
 
 fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
-    commands.spawn_bundle(Camera2dBundle::default());
+    commands.spawn(Camera2dBundle::default());
 
-    commands.spawn_bundle((GameChatMessages::new(),));
+    commands.spawn((GameChatMessages::new(),));
 
     commands
-        .spawn_bundle(NodeBundle {
+        .spawn(NodeBundle {
             style: Style {
                 size: Size::new(Val::Percent(100.), Val::Percent(100.)),
                 justify_content: JustifyContent::SpaceBetween,
                 flex_direction: FlexDirection::ColumnReverse,
                 ..Default::default()
             },
-            color: UiColor(Color::NONE),
             ..Default::default()
         })
         .with_children(|parent| {
             parent
-                .spawn_bundle(NodeBundle {
+                .spawn(NodeBundle {
                     style: Style {
                         size: Size::new(Val::Percent(100.), Val::Percent(90.)),
                         ..Default::default()
@@ -310,23 +309,23 @@ fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                 })
                 .with_children(|parent| {
                     parent
-                        .spawn_bundle(TextBundle {
+                        .spawn(TextBundle {
                             ..Default::default()
                         })
                         .insert(ChatArea);
                 });
             parent
-                .spawn_bundle(NodeBundle {
+                .spawn(NodeBundle {
                     style: Style {
                         size: Size::new(Val::Percent(100.), Val::Percent(10.)),
                         ..Default::default()
                     },
-                    color: UiColor(Color::GRAY),
+                    background_color: BackgroundColor(Color::GRAY),
                     ..Default::default()
                 })
                 .with_children(|parent_button_bar| {
                     parent_button_bar
-                        .spawn_bundle(ButtonBundle {
+                        .spawn(ButtonBundle {
                             style: Style {
                                 size: Size::new(Val::Percent(50.), Val::Percent(100.)),
                                 align_items: AlignItems::Center,
@@ -337,7 +336,7 @@ fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                         })
                         .insert(MessageButton)
                         .with_children(|button| {
-                            button.spawn_bundle(
+                            button.spawn(
                                 TextBundle::from_section(
                                     "Send Message!",
                                     TextStyle {
@@ -351,7 +350,7 @@ fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                         });
 
                     parent_button_bar
-                        .spawn_bundle(ButtonBundle {
+                        .spawn(ButtonBundle {
                             style: Style {
                                 size: Size::new(Val::Percent(50.), Val::Percent(100.)),
                                 align_items: AlignItems::Center,
@@ -362,7 +361,7 @@ fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                         })
                         .insert(ConnectButton)
                         .with_children(|button| {
-                            button.spawn_bundle(
+                            button.spawn(
                                 TextBundle::from_section(
                                     "Connect to server",
                                     TextStyle {

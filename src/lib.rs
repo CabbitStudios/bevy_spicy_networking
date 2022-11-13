@@ -43,8 +43,8 @@ fn main() {
      app.add_plugin(ClientPlugin);
      // We are receiving this from the server, so we need to listen for it
      app.listen_for_server_message::<WorldUpdate>();
-     app.add_system(handle_world_updates.system());
-     app.add_system(handle_connection_events.system());
+     app.add_system(handle_world_updates);
+     app.add_system(handle_connection_events);
 }
 
 fn handle_world_updates(
@@ -124,7 +124,7 @@ fn handle_connection_events(
     for event in network_events.iter() {
         match event {
             &ServerNetworkEvent::Connected(conn_id) => {
-                net.send_message(conn_id, PlayerUpdate::new());
+                let connection_result = net.send_message(conn_id, PlayerUpdate::new());
                 info!("New client connected: {:?}", conn_id);
             }
             _ => (),
@@ -269,7 +269,7 @@ impl<T> NetworkData<T> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Resource)]
 #[allow(missing_copy_implementations)]
 /// Settings to configure the network, both client and server
 pub struct NetworkSettings {

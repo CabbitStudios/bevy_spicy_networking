@@ -59,7 +59,7 @@ fn handle_connection_events(
 ) {
     for event in network_events.iter() {
         if let ServerNetworkEvent::Connected(conn_id) = event {
-            commands.spawn_bundle((Player(*conn_id),));
+            commands.spawn((Player(*conn_id),));
 
             // Broadcasting sends the message to all connected players! (Including the just connected one in this case)
             net.broadcast(shared::NewChatMessage {
