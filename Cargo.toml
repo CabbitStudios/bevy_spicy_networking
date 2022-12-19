@@ -1,8 +1,8 @@
 [package]
 name = "bevy_spicy_networking"
-version = "0.5.1"
+version = "0.5.2"
 authors = ["Neikos <neikos@neikos.email>"]
-edition = "2018"
+edition = "2021"
 description = "A spicy 🌶🌶🌶 and simple networking plugin for Bevy"
 readme = "README.md"
 repository = "https://github.com/CabbitStudios/bevy_spicy_networking"
@@ -25,16 +25,16 @@ name = "server"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bevy = { version = "0.5", features = [], default-features = false }
+bevy = { version = "0.9.0", features = [], default-features = false }
 bincode = "1.3.2"
 crossbeam-channel = "0.5.0"
-dashmap = "4.0.2"
+dashmap = "5.4.0"
 derive_more = "0.99.13"
 downcast-rs = "1.2.0"
 serde = { version = "1.0.125", features = ["derive"] }
 thiserror = "1.0.24"
-tokio = { version = "1.4.0", features = ["net", "io-util", "sync", "rt-multi-thread"] }
-typetag = "0.1.7"
+tokio = { version = "1.21.2", features = ["net", "io-util", "sync", "rt-multi-thread"] }
+typetag = "0.2.3"
 
 [dev-dependencies]
-bevy = { version = "0.5" }
+bevy = { version = "0.9.0", features = ["bevy_asset", "bevy_scene", "bevy_gilrs", "bevy_winit", "animation", "x11",  "filesystem_watcher", "render", "serialize",], default-features = false }

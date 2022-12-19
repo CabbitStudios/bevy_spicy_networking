@@ -33,6 +33,7 @@ struct WorldUpdate;
 #[typetag::serde]
 impl NetworkMessage for WorldUpdate {}
 
+#[typetag::serde]
 impl ServerMessage for WorldUpdate {
     const NAME: &'static str = "example:WorldUpdate";
 }
@@ -42,8 +43,8 @@ fn main() {
      app.add_plugin(ClientPlugin);
      // We are receiving this from the server, so we need to listen for it
      app.listen_for_server_message::<WorldUpdate>();
-     app.add_system(handle_world_updates.system());
-     app.add_system(handle_connection_events.system());
+     app.add_system(handle_world_updates);
+     app.add_system(handle_connection_events);
 }
 
 fn handle_world_updates(
@@ -77,6 +78,7 @@ struct UserInput;
 #[typetag::serde]
 impl NetworkMessage for UserInput {}
 
+//#[typetag::serde]
 impl ClientMessage for UserInput {
     const NAME: &'static str = "example:UserInput";
 }
@@ -122,7 +124,7 @@ fn handle_connection_events(
     for event in network_events.iter() {
         match event {
             &ServerNetworkEvent::Connected(conn_id) => {
-                net.send_message(conn_id, PlayerUpdate::new());
+                let connection_result = net.send_message(conn_id, PlayerUpdate::new());
                 info!("New client connected: {:?}", conn_id);
             }
             _ => (),
@@ -267,7 +269,7 @@ impl<T> NetworkData<T> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Resource)]
 #[allow(missing_copy_implementations)]
 /// Settings to configure the network, both client and server
 pub struct NetworkSettings {
@@ -287,39 +289,39 @@ impl Default for NetworkSettings {
 }
 
 #[derive(Default, Copy, Clone, Debug)]
-/// The plugin to add to your bevy [`AppBuilder`](bevy::prelude::AppBuilder) when you want
+/// The plugin to add to your bevy [`App`](bevy::prelude::App) when you want
 /// to instantiate a server
 pub struct ServerPlugin;
 
 impl Plugin for ServerPlugin {
-    fn build(&self, app: &mut AppBuilder) {
-        app.insert_resource(server::NetworkServer::new());
+    fn build(&self, app: &mut App) {
+        app.insert_resource(NetworkServer::new());
         app.add_event::<ServerNetworkEvent>();
         app.init_resource::<NetworkSettings>();
         app.add_system_to_stage(
             CoreStage::PreUpdate,
-            server::handle_new_incoming_connections.system(),
+            server::handle_new_incoming_connections,
         );
     }
 }
 
 #[derive(Default, Copy, Clone, Debug)]
-/// The plugin to add to your bevy [`AppBuilder`](bevy::prelude::AppBuilder) when you want
+/// The plugin to add to your bevy [`App`](bevy::prelude::App) when you want
 /// to instantiate a client
 pub struct ClientPlugin;
 
 impl Plugin for ClientPlugin {
-    fn build(&self, app: &mut AppBuilder) {
-        app.insert_resource(client::NetworkClient::new());
+    fn build(&self, app: &mut App) {
+        app.insert_resource(NetworkClient::new());
         app.add_event::<ClientNetworkEvent>();
         app.init_resource::<NetworkSettings>();
         app.add_system_to_stage(
             CoreStage::PreUpdate,
-            client::send_client_network_events.system(),
+            client::send_client_network_events,
         );
         app.add_system_to_stage(
             CoreStage::PreUpdate,
-            client::handle_connection_event.system(),
+            client::handle_connection_event,
         );
     }
 }
